@@ -61,7 +61,7 @@ app.use(cors({
 }));
 
 // Обрабатываем preflight-запросы (OPTIONS)
-app.options('*', cors());
+
 
 // ===== Остальные middleware =====
 app.use(express.json());
