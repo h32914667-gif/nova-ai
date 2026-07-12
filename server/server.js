@@ -2,12 +2,9 @@ const express = require('express');
 const cors = require('cors');
 const app = express();
 
-// CORS — разрешаем всё
+// CORS — разрешаем всё (обрабатывает и OPTIONS)
 app.use(cors());
 app.use(express.json());
-
-// Обработка OPTIONS (preflight) для всех маршрутов
-app.options('*', cors());
 
 // Корневой путь
 app.get('/', (req, res) => {
