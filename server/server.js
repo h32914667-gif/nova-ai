@@ -32,20 +32,25 @@ if (!process.env.YANDEX_API_KEY) {
 
 const app = express();
 
-// ===== CORS — САМЫЙ ПЕРВЫЙ =====
+// ===== ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ДЛЯ ВСЕХ OPTIONS (работает для всех путей) =====
+app.options('/*', (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.sendStatus(200);
+});
+
+// ===== CORS для всех остальных запросов =====
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
   next();
 });
 
 app.use(express.json());
 
-// ===== Rate Limiter для /chat (пропускает OPTIONS) =====
+// ===== Rate Limiter (пропускает OPTIONS) =====
 const chatLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
@@ -55,7 +60,7 @@ const chatLimiter = rateLimit({
 });
 app.use('/chat', chatLimiter);
 
-// ===== Multer (загрузка файлов) =====
+// ===== Multer =====
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, 'uploads/'),
   filename: (req, file, cb) => {
