@@ -32,7 +32,7 @@ if (!process.env.YANDEX_API_KEY) {
 
 const app = express();
 
-// ===== РУЧНАЯ НАСТРОЙКА CORS (ГАРАНТИРОВАННО) =====
+// ===== ГЛОБАЛЬНЫЙ CORS (на всякий случай) =====
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
@@ -105,8 +105,10 @@ function cleanText(text) {
   return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
 }
 
-// ===== Эндпоинты =====
+// ===== Эндпоинты с CORS-заголовками вручную =====
+
 app.post("/chats", (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
   try {
     let userId = req.body.userId || getGuest();
     const result = db.prepare(`INSERT INTO conversations (user_id, title) VALUES (?, ?)`).run(userId, "Новый чат");
@@ -118,6 +120,7 @@ app.post("/chats", (req, res) => {
 });
 
 app.get("/chats/:userId", (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
   try {
     const chats = db.prepare(`SELECT * FROM conversations WHERE user_id = ? ORDER BY id DESC`).all(req.params.userId);
     res.json(chats);
@@ -128,6 +131,7 @@ app.get("/chats/:userId", (req, res) => {
 });
 
 app.get("/messages/:chatId", (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
   try {
     const messages = db.prepare(`SELECT * FROM messages WHERE chat_id = ? ORDER BY id ASC`).all(req.params.chatId);
     res.json(messages);
@@ -138,6 +142,7 @@ app.get("/messages/:chatId", (req, res) => {
 });
 
 app.post("/chat", async (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
   try {
     let { userId, chatId, message } = req.body;
     if (!userId) userId = getGuest();
@@ -239,6 +244,7 @@ app.post("/chat", async (req, res) => {
 });
 
 app.post('/upload', upload.single('file'), async (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
   try {
     if (!req.file) return res.status(400).json({ error: 'Файл не загружен' });
 
@@ -323,6 +329,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 });
 
 app.post("/register", async (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
   try {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: "Заполните все поля" });
@@ -338,6 +345,7 @@ app.post("/register", async (req, res) => {
 });
 
 app.post("/login", async (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
   try {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: "Заполните все поля" });
@@ -353,6 +361,7 @@ app.post("/login", async (req, res) => {
 });
 
 app.post('/tts', async (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
   const { text } = req.body;
   console.log("📥 TTS запрос, текст:", text);
   if (!text) {
