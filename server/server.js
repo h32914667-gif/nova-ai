@@ -30,40 +30,19 @@ if (!process.env.YANDEX_API_KEY) {
   console.log("🔑 Ключ Yandex API загружен");
 }
 
-// ===== Создаём приложение =====
 const app = express();
 
-// ===== CORS (динамический, разрешаем любые vercel.app и localhost) =====
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://localhost:5173',
-  /\.vercel\.app$/, // любой поддомен на vercel.app
-];
+// ===== РУЧНАЯ НАСТРОЙКА CORS (ГАРАНТИРОВАННО) =====
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
-app.use(cors({
-  origin: function (origin, callback) {
-    // Если origin не передан (например, запрос с сервера) — пропускаем
-    if (!origin) return callback(null, true);
-    const allowed = allowedOrigins.some(pattern => {
-      if (typeof pattern === 'string') return pattern === origin;
-      if (pattern instanceof RegExp) return pattern.test(origin);
-      return false;
-    });
-    if (allowed) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
-// Обрабатываем preflight-запросы (OPTIONS)
-
-
-// ===== Остальные middleware =====
 app.use(express.json());
 
 // ===== Rate Limiter для /chat =====
@@ -191,21 +170,16 @@ app.post("/chat", async (req, res) => {
       }
     }
 
-    // Сохраняем сообщение пользователя
     db.prepare(`INSERT INTO messages (chat_id, role, message) VALUES (?, ?, ?)`).run(chatId, "user", cleanMessage);
 
-    // Получаем память
     const userMemory = getMemory(userId);
     const memoryText = userMemory.length ? userMemory.map(m => `${m.key}: ${m.value}`).join("\n") : "Память пуста";
     console.log("📋 Память:", memoryText);
 
-    // История (только 5 последних сообщений)
     const history = db.prepare(`SELECT role, message FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 5`).all(chatId).reverse();
 
-    // Короткий системный промпт
     const systemPrompt = `Ты — Nova AI. Помогай пользователю. Информация о пользователе: ${memoryText}. Отвечай кратко.`;
 
-    // Формируем тело запроса (без стрима)
     const requestBody = {
       model: "deepseek/deepseek-chat-v3-0324",
       max_tokens: 300,
@@ -222,7 +196,6 @@ app.post("/chat", async (req, res) => {
 
     console.log("📤 Запрос к OpenRouter (сжатый)");
 
-    // Запрос с таймаутом 60 секунд
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000);
 
@@ -249,7 +222,6 @@ app.post("/chat", async (req, res) => {
       res.setHeader('x-ratelimit-limit', limit);
     }
 
-    // Не стримим, а сразу получаем ответ
     const data = await response.json();
     const reply = data.choices?.[0]?.message?.content || "⚠️ Пустой ответ от AI.";
 
@@ -266,7 +238,6 @@ app.post("/chat", async (req, res) => {
   }
 });
 
-// ===== ЗАГРУЗКА ФАЙЛА С АНАЛИЗОМ ИЗОБРАЖЕНИЙ =====
 app.post('/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Файл не загружен' });
@@ -276,7 +247,6 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     const filename = req.file.originalname;
     const userQuestion = req.body.question || 'Опиши, что изображено на картинке.';
 
-    // Текстовый файл
     if (mimetype === 'text/plain') {
       const content = fs.readFileSync(filePath, 'utf-8');
       fs.unlinkSync(filePath);
@@ -289,7 +259,6 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       });
     }
 
-    // Изображение
     if (mimetype.startsWith('image/')) {
       const imageBuffer = fs.readFileSync(filePath);
       const base64Image = imageBuffer.toString('base64');
@@ -383,7 +352,6 @@ app.post("/login", async (req, res) => {
   }
 });
 
-// ===== TTS =====
 app.post('/tts', async (req, res) => {
   const { text } = req.body;
   console.log("📥 TTS запрос, текст:", text);
@@ -445,7 +413,6 @@ app.post('/tts', async (req, res) => {
   }
 });
 
-// ===== Запуск =====
 app.listen(3001, () => {
   console.log("🚀 Nova AI server running on port 3001");
 });
