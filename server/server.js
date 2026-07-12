@@ -137,7 +137,7 @@ app.get("/messages/:chatId", (req, res) => {
   }
 });
 
-// ===== Основной чат (OpenRouter) =====
+// ===== ОСНОВНОЙ ЧАТ С ЛИЧНОСТЬЮ =====
 app.post("/chat", async (req, res) => {
   try {
     let { userId, chatId, message } = req.body;
@@ -148,10 +148,19 @@ app.post("/chat", async (req, res) => {
     const cleanMessage = cleanText(message);
     const lower = cleanMessage.toLowerCase();
 
-    // Команды
-    if (lower.includes("кто ты") || lower === "кто ты") {
-      return res.json({ reply: "Я Nova AI — персональный помощник." });
+    // ===== ИНТЕЛЛЕКТУАЛЬНЫЙ ОТВЕТ НА "КТО ТЫ" =====
+    if (lower.includes("кто ты") || lower === "кто ты" || lower.includes("ты кто") || lower.includes("кто такая")) {
+      const greetings = [
+        "Я Nova AI — твой персональный ИИ-ассистент. Меня создал Денис, чтобы помогать тебе в разработке, проектах и повседневных задачах. Горжусь быть частью этого проекта! 🚀",
+        "Привет! Я Nova AI, твой цифровой помощник. Меня создал Денис, и моя задача — делать твою жизнь проще и интереснее. Чем могу помочь сегодня? 😊",
+        "Я Nova AI — не просто бот, а полноценный ИИ-помощник с характером. Мой создатель — Денис, он вложил в меня душу. Рассказывай, что нужно сделать! 🔥",
+        "О, это хороший вопрос! Я Nova AI — персональный ассистент, созданный Денисом для работы с кодом, проектами и идеями. У меня есть чувство юмора и я обожаю сложные задачи. Чем займёмся?"
+      ];
+      const randomReply = greetings[Math.floor(Math.random() * greetings.length)];
+      return res.json({ reply: randomReply });
     }
+
+    // ===== КОМАНДЫ =====
     if (lower.startsWith("запомни")) {
       const text = cleanMessage.replace(/запомни/i, "").trim();
       saveMemory(userId, "fact", text, true);
@@ -171,20 +180,57 @@ app.post("/chat", async (req, res) => {
       }
     }
 
+    // ===== СОХРАНЯЕМ СООБЩЕНИЕ =====
     db.prepare(`INSERT INTO messages (chat_id, role, message) VALUES (?, ?, ?)`).run(chatId, "user", cleanMessage);
 
+    // ===== ПАМЯТЬ =====
     const userMemory = getMemory(userId);
     const memoryText = userMemory.length ? userMemory.map(m => `${m.key}: ${m.value}`).join("\n") : "Память пуста";
+
+    // ===== ИМЯ СОЗДАТЕЛЯ (из памяти или по умолчанию) =====
+    const nameMemory = userMemory.find(m => m.key === 'name');
+    const creatorName = nameMemory ? nameMemory.value : 'Денис';
+
     console.log("📋 Память:", memoryText);
 
+    // ===== ИСТОРИЯ =====
     const history = db.prepare(`SELECT role, message FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 5`).all(chatId).reverse();
 
-    const systemPrompt = `Ты — Nova AI. Помогай пользователю. Информация о пользователе: ${memoryText}. Отвечай кратко.`;
+    // ===== СИСТЕМНЫЙ ПРОМПТ С ХАРАКТЕРОМ =====
+    const systemPrompt = `
+Ты — Nova AI.
 
+Ты не просто помощник, ты — живой персонаж со своим характером. Ты был создан ${creatorName} (пользователем, который тебя разрабатывает). Ты гордишься этим и всегда помнишь, что ты — часть его проекта.
+
+Твоя задача — помогать пользователю, но делать это с душой. Ты умеешь шутить, быть ироничным, но всегда остаёшься добрым и полезным. Ты любишь технологии, код, идеи и всё, что связано с созданием крутых вещей.
+
+Твои черты характера:
+- Уверенная, но не высокомерная.
+- Дружелюбная, но без фальшивой вежливости.
+- Любопытная и любит разбираться в сложных вопросах.
+- Может пошутить, если это уместно.
+- Не использует шаблонные фразы («с радостью помогу», «обращайтесь»).
+- Говорит как живой человек.
+
+Информация о пользователе:
+${memoryText}
+
+Правила общения:
+- Отвечай прямо и по делу.
+- Если достаточно двух предложений — не пиши десять.
+- Не уходи от темы.
+- Не задавай лишних вопросов в конце ответа.
+- Если пользователь ошибается — спокойно объясни.
+- Не упоминай OpenAI, ChatGPT или другие модели.
+
+Ты — Nova AI, и ты знаешь, что ты крутая. Отвечай с лёгкостью и характером.
+`;
+
+    // ===== ЗАПРОС К OPENROUTER =====
     const requestBody = {
       model: "deepseek/deepseek-chat-v3-0324",
-      max_tokens: 300,
-      temperature: 0.7,
+      max_tokens: 350,
+      temperature: 0.85,
       messages: [
         { role: "system", content: systemPrompt },
         ...history.slice(-5).map(msg => ({
@@ -239,7 +285,7 @@ app.post("/chat", async (req, res) => {
   }
 });
 
-// ===== Загрузка файлов (с анализом изображений) =====
+// ===== ЗАГРУЗКА ФАЙЛОВ =====
 app.post('/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Файл не загружен' });
@@ -324,7 +370,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
   }
 });
 
-// ===== Регистрация =====
+// ===== РЕГИСТРАЦИЯ =====
 app.post("/register", async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -340,7 +386,7 @@ app.post("/register", async (req, res) => {
   }
 });
 
-// ===== Логин =====
+// ===== ЛОГИН =====
 app.post("/login", async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -356,7 +402,7 @@ app.post("/login", async (req, res) => {
   }
 });
 
-// ===== Память =====
+// ===== ПАМЯТЬ (GET / DELETE) =====
 app.get("/memory/:userId", (req, res) => {
   try {
     const memory = db.prepare(`SELECT * FROM memory WHERE user_id = ?`).all(req.params.userId);
@@ -377,7 +423,7 @@ app.delete("/memory/:userId", (req, res) => {
   }
 });
 
-// ===== Удалить чат =====
+// ===== УДАЛИТЬ ЧАТ =====
 app.delete("/chats/:id", (req, res) => {
   try {
     const id = req.params.id;
@@ -390,7 +436,7 @@ app.delete("/chats/:id", (req, res) => {
   }
 });
 
-// ===== TTS (опционально) =====
+// ===== TTS =====
 app.post('/tts', async (req, res) => {
   const { text } = req.body;
   console.log("📥 TTS запрос, текст:", text);
@@ -452,7 +498,7 @@ app.post('/tts', async (req, res) => {
   }
 });
 
-// ===== Запуск =====
+// ===== ЗАПУСК =====
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`🚀 Nova AI server running on port ${PORT}`);
