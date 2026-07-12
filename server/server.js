@@ -30,7 +30,13 @@ if (!process.env.YANDEX_API_KEY) {
 }
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin:  'https://nova-ftdenvk8d-nov-a.vercel.app',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+app.options('*', cors()); // обрабатываем preflight-запросы
 app.use(express.json());
 
 const chatLimiter = rateLimit({
