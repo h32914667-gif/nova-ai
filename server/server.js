@@ -32,7 +32,7 @@ if (!process.env.YANDEX_API_KEY) {
 
 const app = express();
 
-// ===== CORS (обработка preflight OPTIONS) =====
+// ===== CORS — САМЫЙ ПЕРВЫЙ =====
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
@@ -45,13 +45,13 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
-// ===== Rate Limiter для /chat =====
+// ===== Rate Limiter для /chat (пропускает OPTIONS) =====
 const chatLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
   message: { error: "Слишком много запросов. Подождите минуту." },
   keyGenerator: (req) => req.body.userId || ipKeyGenerator(req),
-  skip: (req) => req.body.userId === '1'
+  skip: (req) => req.body.userId === '1' || req.method === 'OPTIONS'
 });
 app.use('/chat', chatLimiter);
 
