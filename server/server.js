@@ -10,6 +10,7 @@ const bcrypt = require('bcrypt');
 const saltRounds = 10;
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
+// ===== Проверка ключей =====
 if (!process.env.OPENROUTER_KEY) {
   console.error("❌ ОШИБКА: OPENROUTER_KEY не задан!");
   process.exit(1);
@@ -29,16 +30,43 @@ if (!process.env.YANDEX_API_KEY) {
   console.log("🔑 Ключ Yandex API загружен");
 }
 
+// ===== Создаём приложение =====
 const app = express();
+
+// ===== CORS (динамический, разрешаем любые vercel.app и localhost) =====
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  /\.vercel\.app$/, // любой поддомен на vercel.app
+];
+
 app.use(cors({
-  origin:  'https://nova-ftdenvk8d-nov-a.vercel.app',
+  origin: function (origin, callback) {
+    // Если origin не передан (например, запрос с сервера) — пропускаем
+    if (!origin) return callback(null, true);
+    const allowed = allowedOrigins.some(pattern => {
+      if (typeof pattern === 'string') return pattern === origin;
+      if (pattern instanceof RegExp) return pattern.test(origin);
+      return false;
+    });
+    if (allowed) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-app.options('*', cors()); // обрабатываем preflight-запросы
+
+// Обрабатываем preflight-запросы (OPTIONS)
+app.options('*', cors());
+
+// ===== Остальные middleware =====
 app.use(express.json());
 
+// ===== Rate Limiter для /chat =====
 const chatLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
@@ -48,6 +76,7 @@ const chatLimiter = rateLimit({
 });
 app.use('/chat', chatLimiter);
 
+// ===== Multer (загрузка файлов) =====
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, 'uploads/'),
   filename: (req, file, cb) => {
@@ -62,6 +91,7 @@ const fileFilter = (req, file, cb) => {
 };
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 }, fileFilter });
 
+// ===== Функции =====
 function getGuest() {
   let user = db.prepare("SELECT * FROM users WHERE username = ?").get("guest");
   if (!user) {
@@ -96,6 +126,7 @@ function cleanText(text) {
   return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
 }
 
+// ===== Эндпоинты =====
 app.post("/chats", (req, res) => {
   try {
     let userId = req.body.userId || getGuest();
@@ -226,7 +257,7 @@ app.post("/chat", async (req, res) => {
       db.prepare(`INSERT INTO messages (chat_id, role, message) VALUES (?, ?, ?)`).run(chatId, "ai", reply);
     }
 
-    res.json({ reply }); // возвращаем JSON, а не поток
+    res.json({ reply });
 
   } catch (error) {
     console.error("❌ CHAT ERROR:", error);
@@ -234,9 +265,8 @@ app.post("/chat", async (req, res) => {
     else res.end();
   }
 });
-// ========================
-// НОВЫЙ ЭНДПОИНТ ЗАГРУЗКИ С АНАЛИЗОМ ИЗОБРАЖЕНИЙ
-// ========================
+
+// ===== ЗАГРУЗКА ФАЙЛА С АНАЛИЗОМ ИЗОБРАЖЕНИЙ =====
 app.post('/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Файл не загружен' });
@@ -249,7 +279,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     // Текстовый файл
     if (mimetype === 'text/plain') {
       const content = fs.readFileSync(filePath, 'utf-8');
-      fs.unlinkSync(filePath); // удаляем после чтения
+      fs.unlinkSync(filePath);
       return res.json({
         success: true,
         filename,
@@ -261,12 +291,10 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
     // Изображение
     if (mimetype.startsWith('image/')) {
-      // Читаем изображение как base64
       const imageBuffer = fs.readFileSync(filePath);
       const base64Image = imageBuffer.toString('base64');
       const mimeType = mimetype;
 
-      // Отправляем в OpenRouter Vision
       const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -274,7 +302,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          model: "openai/gpt-4o", // можно заменить на google/gemini-pro-vision или anthropic/claude-3-sonnet
+          model: "openai/gpt-4o",
           messages: [
             {
               role: "user",
@@ -295,7 +323,6 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       if (!response.ok) {
         const errorText = await response.text();
         console.error("OpenRouter Vision error:", response.status, errorText);
-        // Удаляем файл, но возвращаем ошибку
         fs.unlinkSync(filePath);
         return res.status(500).json({ error: 'Ошибка анализа изображения' });
       }
@@ -303,7 +330,6 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       const data = await response.json();
       const analysis = data.choices?.[0]?.message?.content || 'Не удалось распознать изображение.';
 
-      // Удаляем файл
       fs.unlinkSync(filePath);
 
       return res.json({
@@ -311,17 +337,15 @@ app.post('/upload', upload.single('file'), async (req, res) => {
         filename,
         savedFilename: req.file.filename,
         size: req.file.size,
-        content: analysis, // возвращаем анализ
+        content: analysis,
         isImage: true
       });
     }
 
-    // Неподдерживаемый формат
     return res.status(400).json({ error: 'Неподдерживаемый формат файла' });
 
   } catch (error) {
     console.error('Upload error:', error);
-    // Пытаемся удалить файл, если он остался
     if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
@@ -421,6 +445,7 @@ app.post('/tts', async (req, res) => {
   }
 });
 
+// ===== Запуск =====
 app.listen(3001, () => {
   console.log("🚀 Nova AI server running on port 3001");
 });
