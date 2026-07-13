@@ -546,7 +546,7 @@ app.get("/admin/stats", (req, res) => {
   }
 });
 
-// Список пользователей
+// Список пользователей (ИСПРАВЛЕНО: убран created_at)
 app.get("/admin/users", (req, res) => {
   try {
     const userId = req.query.userId;
@@ -554,7 +554,7 @@ app.get("/admin/users", (req, res) => {
       return res.status(403).json({ error: "Доступ запрещён" });
     }
 
-    const users = db.prepare("SELECT id, username, created_at FROM users ORDER BY id").all();
+    const users = db.prepare("SELECT id, username FROM users ORDER BY id").all();
     res.json(users);
   } catch (error) {
     console.error("Users list error:", error);
