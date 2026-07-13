@@ -9,7 +9,6 @@ const bcrypt = require('bcrypt');
 const saltRounds = 10;
 const { rateLimit } = require('express-rate-limit');
 
-// ===== База данных =====
 const db = require("./database");
 
 // ===== СОЗДАЁМ ПАПКУ UPLOADS =====
@@ -33,16 +32,13 @@ if (!/^[a-zA-Z0-9\-_]+$/.test(cleanedKey)) {
 process.env.OPENROUTER_KEY = cleanedKey;
 console.log("🔑 Ключ OpenRouter загружен и проверен");
 
-// ===== Инициализация приложения =====
 const app = express();
 
-// ===== CORS =====
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-
 app.use(express.json());
 
 // ===== Rate Limiter =====
@@ -70,7 +66,7 @@ const fileFilter = (req, file, cb) => {
 };
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 }, fileFilter });
 
-// ===== СОЗДАНИЕ ТАБЛИЦ ДЛЯ ПОДПИСОК =====
+// ===== СОЗДАНИЕ ТАБЛИЦ =====
 db.exec(`
   CREATE TABLE IF NOT EXISTS subscriptions (
     user_id INTEGER PRIMARY KEY,
@@ -90,7 +86,7 @@ db.exec(`
   )
 `);
 
-// ===== ЛИМИТЫ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ =====
+// ===== ЛИМИТЫ =====
 const FREE_LIMIT = parseInt(process.env.FREE_LIMIT) || 30;
 const PLUS_LIMIT = parseInt(process.env.PLUS_LIMIT) || 200;
 const PRO_LIMIT = Infinity;
@@ -151,7 +147,6 @@ function cleanText(text) {
   return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
 }
 
-// ===== ПРОВЕРКА ЛИМИТА =====
 function checkLimit(userId) {
   const today = new Date().toISOString().slice(0,10);
   const sub = db.prepare("SELECT plan FROM subscriptions WHERE user_id = ?").get(userId);
@@ -173,12 +168,35 @@ function incrementUsage(userId) {
   `).run(userId, today);
 }
 
+// ===== АДМИН =====
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+
+function ensureAdmin() {
+  const admin = db.prepare("SELECT * FROM users WHERE username = ?").get(ADMIN_USERNAME);
+  if (!admin) {
+    const hashedPassword = bcrypt.hashSync(ADMIN_PASSWORD, saltRounds);
+    db.prepare(`INSERT INTO users (username, password) VALUES (?, ?)`).run(ADMIN_USERNAME, hashedPassword);
+    console.log(`👑 Администратор создан: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD}`);
+  } else {
+    const hashedPassword = bcrypt.hashSync(ADMIN_PASSWORD, saltRounds);
+    db.prepare(`UPDATE users SET password = ? WHERE username = ?`).run(hashedPassword, ADMIN_USERNAME);
+    console.log(`👑 Администратор обновлён: ${ADMIN_USERNAME}`);
+  }
+}
+ensureAdmin();
+
+function isAdmin(userId) {
+  const user = db.prepare("SELECT username FROM users WHERE id = ?").get(userId);
+  return user && user.username === ADMIN_USERNAME;
+}
+
 // ===== Эндпоинты =====
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'Nova API is running' });
 });
 
-// ===== Чаты =====
+// Чаты
 app.post("/chats", (req, res) => {
   try {
     let userId = req.body.userId || getGuest();
@@ -210,7 +228,7 @@ app.get("/messages/:chatId", (req, res) => {
   }
 });
 
-// ===== ОСНОВНОЙ ЧАТ =====
+// Основной чат
 app.post("/chat", async (req, res) => {
   try {
     let { userId, chatId, message } = req.body;
@@ -218,7 +236,6 @@ app.post("/chat", async (req, res) => {
     if (!chatId) return res.json({ reply: "Ошибка: чат не выбран" });
     if (!message) return res.json({ reply: "Напиши сообщение" });
 
-    // === ПРОВЕРКА ЛИМИТА ===
     const limitCheck = checkLimit(userId);
     if (!limitCheck.allowed) {
       return res.json({
@@ -229,134 +246,14 @@ app.post("/chat", async (req, res) => {
     const cleanMessage = cleanText(message);
     const lower = cleanMessage.toLowerCase();
 
-    if (lower.includes("кто ты") || lower === "кто ты" || lower.includes("ты кто") || lower.includes("кто такая")) {
-      const greetings = [
-        "Я Nova AI — твой персональный ИИ-ассистент. Меня создал Денис, чтобы помогать тебе в разработке, проектах и повседневных задачах. Горжусь быть частью этого проекта! 🚀",
-        "Привет! Я Nova AI, твой цифровой помощник. Меня создал Денис, и моя задача — делать твою жизнь проще и интереснее. Чем могу помочь сегодня? 😊",
-        "Я Nova AI — не просто бот, а полноценный ИИ-помощник с характером. Мой создатель — Денис, он вложил в меня душу. Рассказывай, что нужно сделать! 🔥",
-        "О, это хороший вопрос! Я Nova AI — персональный ассистент, созданный Денисом для работы с кодом, проектами и идеями. У меня есть чувство юмора и я обожаю сложные задачи. Чем займёмся?"
-      ];
-      const randomReply = greetings[Math.floor(Math.random() * greetings.length)];
-      // Считаем использование (даже для коротких ответов)
-      incrementUsage(userId);
-      return res.json({ reply: randomReply });
-    }
+    // ... (обработка "кто ты", "запомни" и т.д.) - оставь как у тебя
+    // Для краткости я не копирую всю логику, но она есть в твоём текущем файле.
+    // Убедись, что в конце каждого ответа вызывается incrementUsage(userId) и возвращается reply.
 
-    if (lower.startsWith("запомни")) {
-      const text = cleanMessage.replace(/запомни/i, "").trim();
-      saveMemory(userId, "fact", text, true);
-      incrementUsage(userId);
-      return res.json({ reply: "🧠 Запомнила: " + text });
-    }
-    if (lower.startsWith("забудь")) {
-      deleteMemory(userId, "fact");
-      incrementUsage(userId);
-      return res.json({ reply: "🗑 Забыла." });
-    }
-    if (lower.startsWith("меня зовут") || lower.match(/^я\s+\w+/)) {
-      let name = cleanMessage.replace(/меня зовут/i, "").trim();
-      if (!name || name === cleanMessage) name = cleanMessage.replace(/^я\s+/i, "").trim();
-      if (name) {
-        const capitalized = name.charAt(0).toUpperCase() + name.slice(1);
-        saveMemory(userId, "name", capitalized, true);
-        incrementUsage(userId);
-        return res.json({ reply: `Ок, запомнила: ${capitalized}` });
-      }
-    }
+    // ... (здесь должен быть полный код твоего чата, включая OpenRouter)
 
-    db.prepare(`INSERT INTO messages (chat_id, role, message) VALUES (?, ?, ?)`).run(chatId, "user", cleanMessage);
-
-    const userMemory = getMemory(userId);
-    const memoryText = userMemory.length ? userMemory.map(m => `${m.key}: ${m.value}`).join("\n") : "Память пуста";
-
-    const nameMemory = userMemory.find(m => m.key === 'name');
-    const creatorName = nameMemory ? nameMemory.value : 'Денис';
-
-    console.log("📋 Память:", memoryText);
-
-    const history = db.prepare(`SELECT role, message FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 5`).all(chatId).reverse();
-
-    const systemPrompt = `
-Ты — Nova AI.
-
-Ты не просто помощник, ты — живой персонаж со своим характером. Ты был создан ${creatorName} (пользователем, который тебя разрабатывает). Ты гордишься этим и всегда помнишь, что ты — часть его проекта.
-
-Твоя задача — помогать пользователю, но делать это с душой. Ты умеешь шутить, быть ироничным, но всегда остаёшься добрым и полезным. Ты любишь технологии, код, идеи и всё, что связано с созданием крутых вещей.
-
-Твои черты характера:
-- Уверенная, но не высокомерная.
-- Дружелюбная, но без фальшивой вежливости.
-- Любопытная и любит разбираться в сложных вопросах.
-- Может пошутить, если это уместно.
-- Не использует шаблонные фразы («с радостью помогу», «обращайтесь»).
-- Говорит как живой человек.
-
-Информация о пользователе:
-${memoryText}
-
-Правила общения:
-- Отвечай прямо и по делу.
-- Если достаточно двух предложений — не пиши десять.
-- Не уходи от темы.
-- Не задавай лишних вопросов в конце ответа.
-- Если пользователь ошибается — спокойно объясни.
-- Не упоминай OpenAI, ChatGPT или другие модели.
-
-Ты — Nova AI, и ты знаешь, что ты крутая. Отвечай с лёгкостью и характером.
-`;
-
-    const requestBody = {
-      model: "deepseek/deepseek-chat-v3-0324",
-      max_tokens: 350,
-      temperature: 0.85,
-      messages: [
-        { role: "system", content: systemPrompt },
-        ...history.slice(-5).map(msg => ({
-          role: msg.role === "ai" ? "assistant" : "user",
-          content: msg.message
-        })),
-        { role: "user", content: cleanMessage }
-      ]
-    };
-
-    console.log("📤 Запрос к OpenRouter (сжатый)");
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
-
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.OPENROUTER_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(requestBody),
-      signal: controller.signal
-    }).finally(() => clearTimeout(timeoutId));
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("❌ OpenRouter error:", response.status, errorText);
-      return res.status(500).json({ reply: "⚠️ Ошибка AI-сервиса." });
-    }
-
-    const remaining = response.headers.get('x-ratelimit-remaining');
-    const limit = response.headers.get('x-ratelimit-limit');
-    if (remaining && limit) {
-      res.setHeader('x-ratelimit-remaining', remaining);
-      res.setHeader('x-ratelimit-limit', limit);
-    }
-
-    const data = await response.json();
-    const reply = data.choices?.[0]?.message?.content || "⚠️ Пустой ответ от AI.";
-
-    if (reply) {
-      db.prepare(`INSERT INTO messages (chat_id, role, message) VALUES (?, ?, ?)`).run(chatId, "ai", reply);
-    }
-
-    // Увеличиваем счётчик использования
+    // После успешного ответа:
     incrementUsage(userId);
-
     res.json({ reply });
 
   } catch (error) {
@@ -366,222 +263,40 @@ ${memoryText}
   }
 });
 
-// ===== ЗАГРУЗКА ФАЙЛОВ =====
+// ===== Загрузка файлов =====
 app.post('/upload', upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'Файл не загружен' });
-
-    const filePath = req.file.path;
-    const mimetype = req.file.mimetype;
-    const filename = req.file.originalname;
-    const userQuestion = req.body.question || 'Опиши, что изображено на картинке.';
-
-    if (mimetype === 'text/plain') {
-      const content = fs.readFileSync(filePath, 'utf-8');
-      fs.unlinkSync(filePath);
-      return res.json({
-        success: true,
-        filename,
-        savedFilename: req.file.filename,
-        size: req.file.size,
-        content
-      });
-    }
-
-    if (mimetype.startsWith('image/')) {
-      const imageBuffer = fs.readFileSync(filePath);
-      const base64Image = imageBuffer.toString('base64');
-      const mimeType = mimetype;
-
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${process.env.OPENROUTER_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          model: "openai/gpt-4o",
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "text", text: userQuestion },
-                {
-                  type: "image_url",
-                  image_url: { url: `data:${mimeType};base64,${base64Image}` }
-                }
-              ]
-            }
-          ],
-          max_tokens: 500,
-          temperature: 0.7
-        })
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("OpenRouter Vision error:", response.status, errorText);
-        fs.unlinkSync(filePath);
-        return res.status(500).json({ error: 'Ошибка анализа изображения' });
-      }
-
-      const data = await response.json();
-      const analysis = data.choices?.[0]?.message?.content || 'Не удалось распознать изображение.';
-
-      fs.unlinkSync(filePath);
-
-      return res.json({
-        success: true,
-        filename,
-        savedFilename: req.file.filename,
-        size: req.file.size,
-        content: analysis,
-        isImage: true
-      });
-    }
-
-    return res.status(400).json({ error: 'Неподдерживаемый формат файла' });
-
-  } catch (error) {
-    console.error('Upload error:', error);
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
-    res.status(500).json({ error: 'Ошибка загрузки файла' });
-  }
+  // ... (оставь без изменений)
 });
 
-// ===== РЕГИСТРАЦИЯ =====
+// ===== Регистрация =====
 app.post("/register", async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ error: "Заполните все поля" });
-    const existing = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
-    if (existing) return res.status(400).json({ error: "Пользователь уже существует" });
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
-    const result = db.prepare(`INSERT INTO users (username, password) VALUES (?, ?)`).run(username, hashedPassword);
-    res.json({ success: true, userId: result.lastInsertRowid, username });
-  } catch (error) {
-    console.error("Register error:", error);
-    res.status(500).json({ error: "Ошибка регистрации" });
-  }
+  // ... (без изменений)
 });
 
-// ===== ЛОГИН =====
+// ===== Логин =====
 app.post("/login", async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ error: "Заполните все поля" });
-    const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
-    if (!user) return res.status(400).json({ error: "Пользователь не найден" });
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ error: "Неверный пароль" });
-    res.json({ success: true, userId: user.id, username: user.username });
-  } catch (error) {
-    console.error("Login error:", error);
-    res.status(500).json({ error: "Ошибка входа" });
-  }
+  // ... (без изменений)
 });
 
-// ===== ПАМЯТЬ =====
+// ===== Память =====
 app.get("/memory/:userId", (req, res) => {
-  try {
-    const memory = db.prepare(`SELECT * FROM memory WHERE user_id = ?`).all(req.params.userId);
-    res.json(memory);
-  } catch (error) {
-    console.log(error);
-    res.status(500).json([]);
-  }
+  // ...
 });
-
 app.delete("/memory/:userId", (req, res) => {
-  try {
-    db.prepare(`DELETE FROM memory WHERE user_id = ?`).run(req.params.userId);
-    res.json({ success: true });
-  } catch (error) {
-    console.log("DELETE MEMORY ERROR:", error);
-    res.status(500).json({ success: false });
-  }
+  // ...
 });
 
-// ===== УДАЛИТЬ ЧАТ =====
+// ===== Удалить чат =====
 app.delete("/chats/:id", (req, res) => {
-  try {
-    const id = req.params.id;
-    db.prepare(`DELETE FROM messages WHERE chat_id = ?`).run(id);
-    db.prepare(`DELETE FROM conversations WHERE id = ?`).run(id);
-    res.json({ success: true });
-  } catch (error) {
-    console.log("DELETE CHAT ERROR:", error);
-    res.status(500).json({ success: false });
-  }
+  // ...
 });
 
 // ===== TTS =====
 app.post('/tts', async (req, res) => {
-  const { text } = req.body;
-  console.log("📥 TTS запрос, текст:", text);
-  if (!text) {
-    return res.status(400).json({ error: 'Нет текста' });
-  }
-
-  const apiKey = process.env.YANDEX_API_KEY;
-  if (!apiKey) {
-    console.error("❌ YANDEX_API_KEY отсутствует");
-    return res.status(500).json({ error: 'Ключ Яндекс не настроен' });
-  }
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => {
-    console.warn("⏰ Таймаут TTS (15 сек)");
-    controller.abort();
-  }, 15000);
-
-  try {
-    console.log("🔑 Отправка запроса к Яндекс SpeechKit...");
-    const response = await fetch('https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Api-Key ${apiKey}`,
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      body: new URLSearchParams({
-        text: text,
-        lang: 'ru-RU',
-        voice: 'oksana',
-        format: 'mp3',
-        speed: 1.0,
-        emotion: 'neutral'
-      }),
-      signal: controller.signal
-    });
-
-    clearTimeout(timeoutId);
-
-    console.log("📬 Статус ответа Яндекс:", response.status);
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ Яндекс TTS ошибка:', response.status, errorText);
-      return res.status(500).json({ error: 'Ошибка синтеза речи: ' + errorText });
-    }
-
-    const audioBuffer = await response.arrayBuffer();
-    console.log("✅ TTS успешно, размер аудио:", audioBuffer.byteLength);
-
-    res.setHeader('Content-Type', 'audio/mpeg');
-    res.send(Buffer.from(audioBuffer));
-
-  } catch (error) {
-    clearTimeout(timeoutId);
-    console.error('❌ TTS error:', error);
-    res.status(500).json({ error: 'Ошибка синтеза речи' });
-  }
+  // ...
 });
 
 // ===== ПОДПИСКИ =====
-
-// Получить подписку пользователя с остатком
 app.get("/subscription/:userId", (req, res) => {
   try {
     const userId = req.params.userId;
@@ -597,7 +312,6 @@ app.get("/subscription/:userId", (req, res) => {
     }
     const planData = PLANS[sub.plan] || PLANS.free;
     const limit = planData.messagesPerDay;
-
     const today = new Date().toISOString().slice(0,10);
     let usage = db.prepare("SELECT count FROM usage WHERE user_id = ? AND date = ?").get(userId, today);
     const used = usage ? usage.count : 0;
@@ -617,18 +331,23 @@ app.get("/subscription/:userId", (req, res) => {
   }
 });
 
-// Список тарифов
 app.get("/plans", (req, res) => {
   res.json(PLANS);
 });
 
-// Обновление плана (для теста – без реальной оплаты)
+// === АПГРЕЙД ПОДПИСКИ (только для админа) ===
 app.post("/subscription/upgrade", (req, res) => {
   try {
     const { userId, plan } = req.body;
     if (!userId || !PLANS[plan]) {
       return res.status(400).json({ error: "Неверный запрос" });
     }
+
+    // ⛔ ТОЛЬКО АДМИН МОЖЕТ МЕНЯТЬ ТАРИФ
+    if (!isAdmin(userId)) {
+      return res.status(403).json({ error: "Доступ запрещён. Только администратор может менять тариф." });
+    }
+
     const expiresAt = plan === 'free' ? null : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     db.prepare(`
       INSERT INTO subscriptions (user_id, plan, expires_at) 
@@ -642,84 +361,8 @@ app.post("/subscription/upgrade", (req, res) => {
   }
 });
 
-// ===== АДМИН-ПАНЕЛЬ =====
-
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
-
-function ensureAdmin() {
-  const admin = db.prepare("SELECT * FROM users WHERE username = ?").get(ADMIN_USERNAME);
-  if (!admin) {
-    const hashedPassword = bcrypt.hashSync(ADMIN_PASSWORD, saltRounds);
-    db.prepare(`INSERT INTO users (username, password) VALUES (?, ?)`).run(ADMIN_USERNAME, hashedPassword);
-    console.log(`👑 Администратор создан: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD}`);
-  } else {
-    const hashedPassword = bcrypt.hashSync(ADMIN_PASSWORD, saltRounds);
-    db.prepare(`UPDATE users SET password = ? WHERE username = ?`).run(hashedPassword, ADMIN_USERNAME);
-    console.log(`👑 Администратор обновлён: ${ADMIN_USERNAME}`);
-  }
-}
-ensureAdmin();
-
-function isAdmin(userId) {
-  const user = db.prepare("SELECT username FROM users WHERE id = ?").get(userId);
-  return user && user.username === ADMIN_USERNAME;
-}
-
-app.get("/admin/stats", (req, res) => {
-  try {
-    const userId = req.query.userId;
-    if (!userId || !isAdmin(userId)) {
-      return res.status(403).json({ error: "Доступ запрещён" });
-    }
-    const totalUsers = db.prepare("SELECT COUNT(*) as count FROM users").get();
-    const totalChats = db.prepare("SELECT COUNT(*) as count FROM conversations").get();
-    const totalMessages = db.prepare("SELECT COUNT(*) as count FROM messages").get();
-    res.json({
-      users: totalUsers.count,
-      chats: totalChats.count,
-      messages: totalMessages.count
-    });
-  } catch (error) {
-    console.error("Stats error:", error);
-    res.status(500).json({ error: "Ошибка получения статистики" });
-  }
-});
-
-app.get("/admin/users", (req, res) => {
-  try {
-    const userId = req.query.userId;
-    if (!userId || !isAdmin(userId)) {
-      return res.status(403).json({ error: "Доступ запрещён" });
-    }
-    const users = db.prepare("SELECT id, username FROM users ORDER BY id").all();
-    res.json(users);
-  } catch (error) {
-    console.error("Users list error:", error);
-    res.status(500).json({ error: "Ошибка получения списка пользователей" });
-  }
-});
-
-app.delete("/admin/users/:id", (req, res) => {
-  try {
-    const adminId = req.query.adminId;
-    if (!adminId || !isAdmin(adminId)) {
-      return res.status(403).json({ error: "Доступ запрещён" });
-    }
-    const userId = req.params.id;
-    if (userId == adminId) {
-      return res.status(400).json({ error: "Нельзя удалить самого себя" });
-    }
-    db.prepare("DELETE FROM messages WHERE chat_id IN (SELECT id FROM conversations WHERE user_id = ?)").run(userId);
-    db.prepare("DELETE FROM conversations WHERE user_id = ?").run(userId);
-    db.prepare("DELETE FROM memory WHERE user_id = ?").run(userId);
-    db.prepare("DELETE FROM users WHERE id = ?").run(userId);
-    res.json({ success: true });
-  } catch (error) {
-    console.error("Delete user error:", error);
-    res.status(500).json({ error: "Ошибка удаления пользователя" });
-  }
-});
+// ===== АДМИН-ПАНЕЛЬ (статистика, список пользователей, удаление) =====
+// ... (оставь как есть)
 
 // ===== ЗАПУСК =====
 const PORT = process.env.PORT || 3001;
