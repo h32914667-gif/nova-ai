@@ -70,6 +70,52 @@ const fileFilter = (req, file, cb) => {
 };
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 }, fileFilter });
 
+// ===== СОЗДАНИЕ ТАБЛИЦ ДЛЯ ПОДПИСОК =====
+db.exec(`
+  CREATE TABLE IF NOT EXISTS subscriptions (
+    user_id INTEGER PRIMARY KEY,
+    plan TEXT DEFAULT 'free',
+    expires_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )
+`);
+db.exec(`
+  CREATE TABLE IF NOT EXISTS usage (
+    user_id INTEGER,
+    date TEXT,
+    count INTEGER DEFAULT 0,
+    PRIMARY KEY (user_id, date),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )
+`);
+
+// ===== ЛИМИТЫ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ =====
+const FREE_LIMIT = parseInt(process.env.FREE_LIMIT) || 30;
+const PLUS_LIMIT = parseInt(process.env.PLUS_LIMIT) || 200;
+const PRO_LIMIT = Infinity;
+
+const PLANS = {
+  free: {
+    name: 'Free',
+    price: 0,
+    messagesPerDay: FREE_LIMIT,
+    features: [`${FREE_LIMIT} сообщений в день`, 'Базовая память']
+  },
+  plus: {
+    name: 'Plus',
+    price: 500,
+    messagesPerDay: PLUS_LIMIT,
+    features: [`${PLUS_LIMIT} сообщений в день`, 'Расширенная память', 'Приоритетная поддержка']
+  },
+  pro: {
+    name: 'Pro',
+    price: 1500,
+    messagesPerDay: PRO_LIMIT,
+    features: ['Безлимит сообщений', 'Все функции Plus', 'Эксклюзивные модели AI']
+  }
+};
+
 // ===== Функции =====
 function getGuest() {
   let user = db.prepare("SELECT * FROM users WHERE username = ?").get("guest");
@@ -103,6 +149,28 @@ function deleteMemory(userId, key) {
 function cleanText(text) {
   if (!text) return "";
   return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+}
+
+// ===== ПРОВЕРКА ЛИМИТА =====
+function checkLimit(userId) {
+  const today = new Date().toISOString().slice(0,10);
+  const sub = db.prepare("SELECT plan FROM subscriptions WHERE user_id = ?").get(userId);
+  const plan = sub ? sub.plan : 'free';
+  const limit = PLANS[plan]?.messagesPerDay || FREE_LIMIT;
+  if (limit === Infinity) return { allowed: true, remaining: Infinity, limit };
+
+  let usage = db.prepare("SELECT count FROM usage WHERE user_id = ? AND date = ?").get(userId, today);
+  const used = usage ? usage.count : 0;
+  const remaining = Math.max(0, limit - used);
+  return { allowed: used < limit, remaining, limit };
+}
+
+function incrementUsage(userId) {
+  const today = new Date().toISOString().slice(0,10);
+  db.prepare(`
+    INSERT INTO usage (user_id, date, count) VALUES (?, ?, 1)
+    ON CONFLICT(user_id, date) DO UPDATE SET count = count + 1
+  `).run(userId, today);
 }
 
 // ===== Эндпоинты =====
@@ -150,6 +218,14 @@ app.post("/chat", async (req, res) => {
     if (!chatId) return res.json({ reply: "Ошибка: чат не выбран" });
     if (!message) return res.json({ reply: "Напиши сообщение" });
 
+    // === ПРОВЕРКА ЛИМИТА ===
+    const limitCheck = checkLimit(userId);
+    if (!limitCheck.allowed) {
+      return res.json({
+        reply: `❌ Дневной лимит сообщений исчерпан (${limitCheck.limit} в день). Апгрейди подписку в настройках!`
+      });
+    }
+
     const cleanMessage = cleanText(message);
     const lower = cleanMessage.toLowerCase();
 
@@ -161,16 +237,20 @@ app.post("/chat", async (req, res) => {
         "О, это хороший вопрос! Я Nova AI — персональный ассистент, созданный Денисом для работы с кодом, проектами и идеями. У меня есть чувство юмора и я обожаю сложные задачи. Чем займёмся?"
       ];
       const randomReply = greetings[Math.floor(Math.random() * greetings.length)];
+      // Считаем использование (даже для коротких ответов)
+      incrementUsage(userId);
       return res.json({ reply: randomReply });
     }
 
     if (lower.startsWith("запомни")) {
       const text = cleanMessage.replace(/запомни/i, "").trim();
       saveMemory(userId, "fact", text, true);
+      incrementUsage(userId);
       return res.json({ reply: "🧠 Запомнила: " + text });
     }
     if (lower.startsWith("забудь")) {
       deleteMemory(userId, "fact");
+      incrementUsage(userId);
       return res.json({ reply: "🗑 Забыла." });
     }
     if (lower.startsWith("меня зовут") || lower.match(/^я\s+\w+/)) {
@@ -179,6 +259,7 @@ app.post("/chat", async (req, res) => {
       if (name) {
         const capitalized = name.charAt(0).toUpperCase() + name.slice(1);
         saveMemory(userId, "name", capitalized, true);
+        incrementUsage(userId);
         return res.json({ reply: `Ок, запомнила: ${capitalized}` });
       }
     }
@@ -272,6 +353,9 @@ ${memoryText}
     if (reply) {
       db.prepare(`INSERT INTO messages (chat_id, role, message) VALUES (?, ?, ?)`).run(chatId, "ai", reply);
     }
+
+    // Увеличиваем счётчик использования
+    incrementUsage(userId);
 
     res.json({ reply });
 
@@ -495,13 +579,74 @@ app.post('/tts', async (req, res) => {
   }
 });
 
+// ===== ПОДПИСКИ =====
+
+// Получить подписку пользователя с остатком
+app.get("/subscription/:userId", (req, res) => {
+  try {
+    const userId = req.params.userId;
+    let sub = db.prepare("SELECT plan, expires_at, created_at FROM subscriptions WHERE user_id = ?").get(userId);
+    if (!sub) {
+      db.prepare("INSERT INTO subscriptions (user_id, plan) VALUES (?, ?)").run(userId, 'free');
+      sub = { plan: 'free', expires_at: null, created_at: new Date().toISOString() };
+    }
+    if (sub.expires_at && new Date(sub.expires_at) < new Date()) {
+      db.prepare("UPDATE subscriptions SET plan = 'free', expires_at = NULL WHERE user_id = ?").run(userId);
+      sub.plan = 'free';
+      sub.expires_at = null;
+    }
+    const planData = PLANS[sub.plan] || PLANS.free;
+    const limit = planData.messagesPerDay;
+
+    const today = new Date().toISOString().slice(0,10);
+    let usage = db.prepare("SELECT count FROM usage WHERE user_id = ? AND date = ?").get(userId, today);
+    const used = usage ? usage.count : 0;
+    const remaining = limit === Infinity ? Infinity : Math.max(0, limit - used);
+
+    res.json({
+      plan: sub.plan,
+      ...planData,
+      used,
+      remaining,
+      expires_at: sub.expires_at,
+      created_at: sub.created_at
+    });
+  } catch (error) {
+    console.error("Subscription error:", error);
+    res.status(500).json({ error: "Ошибка получения подписки" });
+  }
+});
+
+// Список тарифов
+app.get("/plans", (req, res) => {
+  res.json(PLANS);
+});
+
+// Обновление плана (для теста – без реальной оплаты)
+app.post("/subscription/upgrade", (req, res) => {
+  try {
+    const { userId, plan } = req.body;
+    if (!userId || !PLANS[plan]) {
+      return res.status(400).json({ error: "Неверный запрос" });
+    }
+    const expiresAt = plan === 'free' ? null : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    db.prepare(`
+      INSERT INTO subscriptions (user_id, plan, expires_at) 
+      VALUES (?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET plan = excluded.plan, expires_at = excluded.expires_at
+    `).run(userId, plan, expiresAt);
+    res.json({ success: true, plan, expires_at: expiresAt });
+  } catch (error) {
+    console.error("Upgrade error:", error);
+    res.status(500).json({ error: "Ошибка обновления подписки" });
+  }
+});
+
 // ===== АДМИН-ПАНЕЛЬ =====
 
-// Имя администратора из переменной окружения (или 'admin' по умолчанию)
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 
-// Создаём админа, если его нет
 function ensureAdmin() {
   const admin = db.prepare("SELECT * FROM users WHERE username = ?").get(ADMIN_USERNAME);
   if (!admin) {
@@ -509,7 +654,6 @@ function ensureAdmin() {
     db.prepare(`INSERT INTO users (username, password) VALUES (?, ?)`).run(ADMIN_USERNAME, hashedPassword);
     console.log(`👑 Администратор создан: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD}`);
   } else {
-    // Если пароль в переменной изменился – обновим
     const hashedPassword = bcrypt.hashSync(ADMIN_PASSWORD, saltRounds);
     db.prepare(`UPDATE users SET password = ? WHERE username = ?`).run(hashedPassword, ADMIN_USERNAME);
     console.log(`👑 Администратор обновлён: ${ADMIN_USERNAME}`);
@@ -517,24 +661,20 @@ function ensureAdmin() {
 }
 ensureAdmin();
 
-// Проверка, является ли пользователь админом
 function isAdmin(userId) {
   const user = db.prepare("SELECT username FROM users WHERE id = ?").get(userId);
   return user && user.username === ADMIN_USERNAME;
 }
 
-// Статистика
 app.get("/admin/stats", (req, res) => {
   try {
     const userId = req.query.userId;
     if (!userId || !isAdmin(userId)) {
       return res.status(403).json({ error: "Доступ запрещён" });
     }
-
     const totalUsers = db.prepare("SELECT COUNT(*) as count FROM users").get();
     const totalChats = db.prepare("SELECT COUNT(*) as count FROM conversations").get();
     const totalMessages = db.prepare("SELECT COUNT(*) as count FROM messages").get();
-
     res.json({
       users: totalUsers.count,
       chats: totalChats.count,
@@ -546,14 +686,12 @@ app.get("/admin/stats", (req, res) => {
   }
 });
 
-// Список пользователей (ИСПРАВЛЕНО: убран created_at)
 app.get("/admin/users", (req, res) => {
   try {
     const userId = req.query.userId;
     if (!userId || !isAdmin(userId)) {
       return res.status(403).json({ error: "Доступ запрещён" });
     }
-
     const users = db.prepare("SELECT id, username FROM users ORDER BY id").all();
     res.json(users);
   } catch (error) {
@@ -562,7 +700,6 @@ app.get("/admin/users", (req, res) => {
   }
 });
 
-// Удаление пользователя
 app.delete("/admin/users/:id", (req, res) => {
   try {
     const adminId = req.query.adminId;

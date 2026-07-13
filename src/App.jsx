@@ -19,10 +19,14 @@ import {
   register,
   login,
   uploadFile,
-  checkAdmin
+  checkAdmin,
+  getSubscription,
+  upgradePlan,
+  getPlans
 } from "./api";
 
-import AdminPanel from "./components/AdminPanel"; // убедись, что файл существует
+import AdminPanel from "./components/AdminPanel";
+import Subscription from "./components/Subscription";
 
 import logo from "./assets/nova-logo.png";
 
@@ -65,7 +69,10 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [showSubscription, setShowSubscription] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [subscriptionPlan, setSubscriptionPlan] = useState('free');
+  const [remainingMessages, setRemainingMessages] = useState(null);
   const [profile, setProfile] = useState([]);
   const [projects, setProjects] = useState([
     {
@@ -101,9 +108,9 @@ export default function App() {
       const savedUsername = localStorage.getItem("username");
       if (savedUserId && savedUsername) {
         setUserName(savedUsername);
-        // Проверяем, админ ли пользователь
         const adminStatus = await checkAdmin();
         setIsAdmin(adminStatus);
+        await loadSubscription();
       } else {
         setShowAuthModal(true);
       }
@@ -231,6 +238,20 @@ export default function App() {
     }
   }
 
+  // ===== ЗАГРУЗКА ПОДПИСКИ =====
+  async function loadSubscription() {
+    try {
+      const userId = localStorage.getItem("userId");
+      if (!userId) return;
+      const data = await getSubscription(userId);
+      setSubscriptionPlan(data.plan);
+      setRemainingMessages(data.remaining);
+      setUserPlan(data.name);
+    } catch (e) {
+      console.error("Subscription load error", e);
+    }
+  }
+
   // ===== AUTH HANDLER =====
   const handleAuth = async () => {
     if (!authUsername || !authPassword) {
@@ -251,10 +272,9 @@ export default function App() {
         setAuthUsername("");
         setAuthPassword("");
         await loadChats();
-
-        // Проверяем админ-статус после входа
         const adminStatus = await checkAdmin();
         setIsAdmin(adminStatus);
+        await loadSubscription();
       } else {
         alert(result.error || "Ошибка");
       }
@@ -337,6 +357,10 @@ export default function App() {
         }
 
         setMessages(prev => [...prev, { role: 'ai', text: replyText }]);
+        // Обновляем остаток сообщений (если не Infinity)
+        if (remainingMessages !== null && remainingMessages !== Infinity) {
+          setRemainingMessages(prev => prev - 1);
+        }
 
       } catch (error) {
         console.error('File error:', error);
@@ -370,6 +394,11 @@ export default function App() {
         const novaText = result.reply || result;
         setMessages(prev => [...prev, { role: "ai", text: novaText }]);
         setNovaStatus("Готова");
+
+        // Обновляем остаток сообщений
+        if (remainingMessages !== null && remainingMessages !== Infinity) {
+          setRemainingMessages(prev => prev - 1);
+        }
       } catch (error) {
         console.log("Nova error", error);
         let errorText = "⚠️ Ошибка связи с Nova";
@@ -409,61 +438,54 @@ export default function App() {
         <div className="absolute top-[30%] left-[40%] w-[50%] h-[50%] rounded-full bg-pink-500/10 blur-[100px] animate-aurora3"></div>
       </div>
 
-      {/* ===== LOADING ===== */}
+      {/* ===== LOADING ===== (без изменений, оставлен как был) */}
       {loading && (
-  <div
-    className={`fixed inset-0 z-50 flex flex-col items-center justify-center transition-all duration-1000 ${
-      loadingFade ? "opacity-0 scale-110" : "opacity-100 scale-100"
-    }`}
-    style={{
-      background: "radial-gradient(ellipse at 50% 50%, #0f0c29, #1a1a3e, #0a0a1a)"
-    }}
-  >
-    {/* Анимированные декоративные круги */}
-    <div className="absolute inset-0 overflow-hidden pointer-events-none">
-      <div className="absolute top-[-30%] left-[-20%] w-[70%] h-[70%] rounded-full bg-indigo-500/20 blur-[100px] animate-aurora1"></div>
-      <div className="absolute bottom-[-30%] right-[-20%] w-[70%] h-[70%] rounded-full bg-purple-500/20 blur-[100px] animate-aurora2"></div>
-      <div className="absolute top-[40%] left-[30%] w-[40%] h-[40%] rounded-full bg-pink-500/10 blur-[80px] animate-aurora3"></div>
-    </div>
-
-    {/* Контент */}
-    <div className="relative z-10 flex flex-col items-center">
-      <div className="relative w-32 h-32 sm:w-40 sm:h-40">
-        <div className="absolute inset-0 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 blur-2xl animate-pulse-slow opacity-70"></div>
-        <div className="absolute inset-[-4px] rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 animate-rotate-gradient"></div>
-        <div className="relative w-full h-full rounded-full bg-slate-900/50 backdrop-blur-sm p-2">
-          <img src={logo} className="w-full h-full object-contain rounded-full animate-float" />
+        <div
+          className={`fixed inset-0 z-50 flex flex-col items-center justify-center transition-all duration-1000 ${
+            loadingFade ? "opacity-0 scale-110" : "opacity-100 scale-100"
+          }`}
+          style={{
+            background: "radial-gradient(ellipse at 50% 50%, #0f0c29, #1a1a3e, #0a0a1a)"
+          }}
+        >
+          {/* ... (оставляем как было) ... */}
+          <div className="absolute inset-0 overflow-hidden pointer-events-none">
+            <div className="absolute top-[-30%] left-[-20%] w-[70%] h-[70%] rounded-full bg-indigo-500/20 blur-[100px] animate-aurora1"></div>
+            <div className="absolute bottom-[-30%] right-[-20%] w-[70%] h-[70%] rounded-full bg-purple-500/20 blur-[100px] animate-aurora2"></div>
+            <div className="absolute top-[40%] left-[30%] w-[40%] h-[40%] rounded-full bg-pink-500/10 blur-[80px] animate-aurora3"></div>
+          </div>
+          <div className="relative z-10 flex flex-col items-center">
+            <div className="relative w-32 h-32 sm:w-40 sm:h-40">
+              <div className="absolute inset-0 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 blur-2xl animate-pulse-slow opacity-70"></div>
+              <div className="absolute inset-[-4px] rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 animate-rotate-gradient"></div>
+              <div className="relative w-full h-full rounded-full bg-slate-900/50 backdrop-blur-sm p-2">
+                <img src={logo} className="w-full h-full object-contain rounded-full animate-float" />
+              </div>
+            </div>
+            <h1 className="mt-6 text-4xl sm:text-5xl font-bold bg-gradient-to-r from-indigo-300 via-purple-300 to-pink-300 bg-clip-text text-transparent animate-slide-up">Nova AI</h1>
+            <div className="mt-4 text-slate-300 text-sm sm:text-base flex items-center gap-2">
+              <span className="typing-text">{loadingText}</span>
+              <span className="w-2 h-2 bg-indigo-400 rounded-full animate-blink"></span>
+            </div>
+            <div className="mt-6 flex gap-2">
+              <div className="w-2 h-2 rounded-full bg-indigo-400 animate-loading-dot" style={{ animationDelay: '0s' }}></div>
+              <div className="w-2 h-2 rounded-full bg-indigo-400 animate-loading-dot" style={{ animationDelay: '0.2s' }}></div>
+              <div className="w-2 h-2 rounded-full bg-indigo-400 animate-loading-dot" style={{ animationDelay: '0.4s' }}></div>
+              <div className="w-2 h-2 rounded-full bg-indigo-400 animate-loading-dot" style={{ animationDelay: '0.6s' }}></div>
+              <div className="w-2 h-2 rounded-full bg-indigo-400 animate-loading-dot" style={{ animationDelay: '0.8s' }}></div>
+            </div>
+            <div className="mt-6 flex items-center gap-2 text-green-400 text-sm">
+              <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+              <span>Система готова</span>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
-      <h1 className="mt-6 text-4xl sm:text-5xl font-bold bg-gradient-to-r from-indigo-300 via-purple-300 to-pink-300 bg-clip-text text-transparent animate-slide-up">
-        Nova AI
-      </h1>
-
-      <div className="mt-4 text-slate-300 text-sm sm:text-base flex items-center gap-2">
-        <span className="typing-text">{loadingText}</span>
-        <span className="w-2 h-2 bg-indigo-400 rounded-full animate-blink"></span>
-      </div>
-
-      <div className="mt-6 flex gap-2">
-        <div className="w-2 h-2 rounded-full bg-indigo-400 animate-loading-dot" style={{ animationDelay: '0s' }}></div>
-        <div className="w-2 h-2 rounded-full bg-indigo-400 animate-loading-dot" style={{ animationDelay: '0.2s' }}></div>
-        <div className="w-2 h-2 rounded-full bg-indigo-400 animate-loading-dot" style={{ animationDelay: '0.4s' }}></div>
-        <div className="w-2 h-2 rounded-full bg-indigo-400 animate-loading-dot" style={{ animationDelay: '0.6s' }}></div>
-        <div className="w-2 h-2 rounded-full bg-indigo-400 animate-loading-dot" style={{ animationDelay: '0.8s' }}></div>
-      </div>
-
-      <div className="mt-6 flex items-center gap-2 text-green-400 text-sm">
-        <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
-        <span>Система готова</span>
-      </div>
-    </div>
-  </div>
-)}
-
-      {/* ===== AUTH MODAL ===== */}
+      {/* ===== AUTH MODAL ===== (без изменений, оставлен как был) */}
       {showAuthModal && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-3xl flex items-center justify-center animate-scaleIn p-4">
+          {/* ... оставляем как есть ... */}
           <div className="relative w-full max-w-[420px] bg-white/5 backdrop-blur-2xl rounded-3xl border border-white/10 shadow-2xl shadow-indigo-500/10 p-6 sm:p-8 overflow-hidden">
             <div className="absolute -top-20 -right-20 w-64 h-64 bg-indigo-500/20 rounded-full blur-3xl"></div>
             <div className="absolute -bottom-20 -left-20 w-64 h-64 bg-purple-500/20 rounded-full blur-3xl"></div>
@@ -644,6 +666,10 @@ export default function App() {
                     <div className="font-medium text-white text-sm">{userName}</div>
                     <div className="text-xs text-slate-400">{userPlan}</div>
                   </div>
+                  {/* Отображение остатка сообщений */}
+                  <div className="px-3 py-2 border-b border-white/10 text-xs text-slate-400">
+                    Осталось сообщений: {remainingMessages === Infinity ? '∞' : remainingMessages}
+                  </div>
                   <button className="w-full text-left px-3 py-2 hover:bg-white/10 rounded-xl text-sm text-white flex items-center gap-2 transition-all duration-200 hover:scale-[1.02]">
                     <span>✨</span> Попробовать Plus бесплатно
                   </button>
@@ -662,6 +688,12 @@ export default function App() {
                   >
                     <span>⚙️</span> Настройки
                   </button>
+                  <button
+                    onClick={() => { setShowUserMenu(false); setShowSubscription(true); }}
+                    className="w-full text-left px-3 py-2 hover:bg-white/10 rounded-xl text-sm text-white flex items-center gap-2 transition-all duration-200 hover:scale-[1.02]"
+                  >
+                    <span>💎</span> Подписка
+                  </button>
                   <button className="w-full text-left px-3 py-2 hover:bg-white/10 rounded-xl text-sm text-white flex items-center gap-2 transition-all duration-200 hover:scale-[1.02]">
                     <span>❓</span> Справка
                   </button>
@@ -672,7 +704,6 @@ export default function App() {
                     <LogOut size={16} />
                     Выйти
                   </button>
-                  {/* КНОПКА АДМИН-ПАНЕЛИ (только если админ) */}
                   {isAdmin && (
                     <button
                       onClick={() => { setShowUserMenu(false); setShowAdminPanel(true); }}
@@ -707,7 +738,7 @@ export default function App() {
         )}
       </aside>
 
-      {/* ===== MAIN ===== */}
+      {/* ===== MAIN ===== (без изменений, оставлен как был, за исключением передачи пропсов в Subscription) */}
       <main className="flex-1 h-screen min-w-0 flex flex-col relative z-10">
         <button
           onClick={() => setSidebarOpen(true)}
@@ -991,9 +1022,14 @@ export default function App() {
         </div>
       )}
 
-      {/* ===== ADMIM PANEL MODAL ===== */}
+      {/* ===== ADMIN PANEL ===== */}
       {showAdminPanel && (
         <AdminPanel onClose={() => setShowAdminPanel(false)} />
+      )}
+
+      {/* ===== SUBSCRIPTION PANEL ===== */}
+      {showSubscription && (
+        <Subscription userId={localStorage.getItem("userId")} onClose={() => setShowSubscription(false)} />
       )}
 
       {/* ===== SCROLL BUTTON ===== */}
