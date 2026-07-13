@@ -11,7 +11,7 @@ export async function register(username, password) {
     const errorData = await response.json();
     throw new Error(errorData.error || "Ошибка регистрации");
   }
-  return await response.json(); // { success: true, userId, username }
+  return await response.json();
 }
 
 export async function login(username, password) {
@@ -24,7 +24,7 @@ export async function login(username, password) {
     const errorData = await response.json();
     throw new Error(errorData.error || "Ошибка входа");
   }
-  return await response.json(); // { success: true, userId, username }
+  return await response.json();
 }
 
 // ===== ЧАТЫ =====
@@ -125,33 +125,62 @@ export async function getTTS(text) {
   return await response.arrayBuffer();
 }
 
-// ===== ЗАГРУЗКА ФАЙЛОВ (с анализом изображения) =====
+// ===== ЗАГРУЗКА ФАЙЛОВ =====
 export async function uploadFile(file, question = "Опиши, что изображено на картинке.") {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("question", question);
-
   const response = await fetch(`${API}/upload`, {
     method: "POST",
     body: formData
-    // Не указываем Content-Type — fetch сам добавит с правильной границей
   });
-
   if (!response.ok) {
     const errorData = await response.json();
     throw new Error(errorData.error || "Ошибка загрузки файла");
   }
-
-  return await response.json(); // { success, filename, savedFilename, size, content, isImage? }
+  return await response.json();
 }
-// ===== ПРОВЕРКА АДМИНА =====
+
+// ===== АДМИН-ПАНЕЛЬ =====
 export async function checkAdmin() {
   const userId = localStorage.getItem("userId");
   if (!userId) return false;
   try {
     const response = await fetch(`${API}/admin/stats?userId=${userId}`);
-    return response.ok; // если 200 – админ
+    return response.ok;
   } catch {
     return false;
   }
+}
+
+export async function getStats() {
+  const userId = localStorage.getItem("userId");
+  const response = await fetch(`${API}/admin/stats?userId=${userId}`);
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Ошибка статистики");
+  }
+  return await response.json();
+}
+
+export async function getUsers() {
+  const userId = localStorage.getItem("userId");
+  const response = await fetch(`${API}/admin/users?userId=${userId}`);
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Ошибка списка пользователей");
+  }
+  return await response.json();
+}
+
+export async function deleteUser(id) {
+  const adminId = localStorage.getItem("userId");
+  const response = await fetch(`${API}/admin/users/${id}?adminId=${adminId}`, {
+    method: "DELETE"
+  });
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Ошибка удаления");
+  }
+  return await response.json();
 }
