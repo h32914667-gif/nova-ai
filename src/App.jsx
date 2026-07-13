@@ -409,22 +409,60 @@ export default function App() {
 
       {/* ===== LOADING ===== */}
       {loading && (
-        <div
-          className={`fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-950 transition-all duration-700 ${
-            loadingFade ? "opacity-0 scale-110" : "opacity-100"
-          }`}
-        >
-          <div className="relative">
-            <div className="absolute inset-0 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 blur-3xl animate-pulse" />
-            <img src={logo} className="relative w-36 h-36 object-contain animate-spin" />
-          </div>
-          <h1 className="mt-8 text-5xl font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-            Nova AI
-          </h1>
-          <p className="mt-4 text-slate-400 animate-pulse">{loadingText}</p>
-          <div className="mt-5 text-green-400">🟢 Online</div>
+  <div
+    className={`fixed inset-0 z-50 flex flex-col items-center justify-center transition-all duration-1000 ${
+      loadingFade ? "opacity-0 scale-110" : "opacity-100 scale-100"
+    }`}
+    style={{
+      background: "radial-gradient(ellipse at 50% 50%, #0f0c29, #1a1a3e, #0a0a1a)"
+    }}
+  >
+    {/* Анимированные декоративные круги */}
+    <div className="absolute inset-0 overflow-hidden pointer-events-none">
+      <div className="absolute top-[-30%] left-[-20%] w-[70%] h-[70%] rounded-full bg-indigo-500/20 blur-[100px] animate-aurora1"></div>
+      <div className="absolute bottom-[-30%] right-[-20%] w-[70%] h-[70%] rounded-full bg-purple-500/20 blur-[100px] animate-aurora2"></div>
+      <div className="absolute top-[40%] left-[30%] w-[40%] h-[40%] rounded-full bg-pink-500/10 blur-[80px] animate-aurora3"></div>
+    </div>
+
+    {/* Контент */}
+    <div className="relative z-10 flex flex-col items-center">
+      {/* Логотип с пульсацией и свечением */}
+      <div className="relative w-32 h-32 sm:w-40 sm:h-40">
+        <div className="absolute inset-0 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 blur-2xl animate-pulse-slow opacity-70"></div>
+        <div className="absolute inset-[-4px] rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 animate-rotate-gradient"></div>
+        <div className="relative w-full h-full rounded-full bg-slate-900/50 backdrop-blur-sm p-2">
+          <img src={logo} className="w-full h-full object-contain rounded-full animate-float" />
         </div>
-      )}
+      </div>
+
+      {/* Название с градиентом */}
+      <h1 className="mt-6 text-4xl sm:text-5xl font-bold bg-gradient-to-r from-indigo-300 via-purple-300 to-pink-300 bg-clip-text text-transparent animate-slide-up">
+        Nova AI
+      </h1>
+
+      {/* Статус загрузки с печатающимся текстом */}
+      <div className="mt-4 text-slate-300 text-sm sm:text-base flex items-center gap-2">
+        <span className="typing-text">{loadingText}</span>
+        <span className="w-2 h-2 bg-indigo-400 rounded-full animate-blink"></span>
+      </div>
+
+      {/* Прогресс-бары (точки) */}
+      <div className="mt-6 flex gap-2">
+        <div className="w-2 h-2 rounded-full bg-indigo-400 animate-loading-dot" style={{ animationDelay: '0s' }}></div>
+        <div className="w-2 h-2 rounded-full bg-indigo-400 animate-loading-dot" style={{ animationDelay: '0.2s' }}></div>
+        <div className="w-2 h-2 rounded-full bg-indigo-400 animate-loading-dot" style={{ animationDelay: '0.4s' }}></div>
+        <div className="w-2 h-2 rounded-full bg-indigo-400 animate-loading-dot" style={{ animationDelay: '0.6s' }}></div>
+        <div className="w-2 h-2 rounded-full bg-indigo-400 animate-loading-dot" style={{ animationDelay: '0.8s' }}></div>
+      </div>
+
+      {/* Статус "Online" с пульсацией */}
+      <div className="mt-6 flex items-center gap-2 text-green-400 text-sm">
+        <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+        <span>Система готова</span>
+      </div>
+    </div>
+  </div>
+)}
 
       {/* ===== AUTH MODAL ===== */}
       {showAuthModal && (
