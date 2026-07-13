@@ -12,7 +12,7 @@ const { rateLimit } = require('express-rate-limit');
 // ===== База данных =====
 const db = require("./database");
 
-// ===== СОЗДАЁМ ПАПКУ UPLOADS (если нет) =====
+// ===== СОЗДАЁМ ПАПКУ UPLOADS =====
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -36,7 +36,7 @@ console.log("🔑 Ключ OpenRouter загружен и проверен");
 // ===== Инициализация приложения =====
 const app = express();
 
-// ===== CORS (глобальный) =====
+// ===== CORS =====
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -45,7 +45,7 @@ app.use(cors({
 
 app.use(express.json());
 
-// ===== Rate Limiter для /chat =====
+// ===== Rate Limiter =====
 const chatLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
@@ -55,9 +55,9 @@ const chatLimiter = rateLimit({
 });
 app.use('/chat', chatLimiter);
 
-// ===== Multer (загрузка файлов) =====
+// ===== Multer =====
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir), // используем путь с переменной
+  destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, uniqueSuffix + '-' + file.originalname);
@@ -106,8 +106,6 @@ function cleanText(text) {
 }
 
 // ===== Эндпоинты =====
-
-// Корневой путь
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'Nova API is running' });
 });
@@ -144,7 +142,7 @@ app.get("/messages/:chatId", (req, res) => {
   }
 });
 
-// ===== ОСНОВНОЙ ЧАТ С ЛИЧНОСТЬЮ =====
+// ===== ОСНОВНОЙ ЧАТ =====
 app.post("/chat", async (req, res) => {
   try {
     let { userId, chatId, message } = req.body;
@@ -155,7 +153,6 @@ app.post("/chat", async (req, res) => {
     const cleanMessage = cleanText(message);
     const lower = cleanMessage.toLowerCase();
 
-    // ===== ИНТЕЛЛЕКТУАЛЬНЫЙ ОТВЕТ НА "КТО ТЫ" =====
     if (lower.includes("кто ты") || lower === "кто ты" || lower.includes("ты кто") || lower.includes("кто такая")) {
       const greetings = [
         "Я Nova AI — твой персональный ИИ-ассистент. Меня создал Денис, чтобы помогать тебе в разработке, проектах и повседневных задачах. Горжусь быть частью этого проекта! 🚀",
@@ -167,7 +164,6 @@ app.post("/chat", async (req, res) => {
       return res.json({ reply: randomReply });
     }
 
-    // ===== КОМАНДЫ =====
     if (lower.startsWith("запомни")) {
       const text = cleanMessage.replace(/запомни/i, "").trim();
       saveMemory(userId, "fact", text, true);
@@ -187,23 +183,18 @@ app.post("/chat", async (req, res) => {
       }
     }
 
-    // ===== СОХРАНЯЕМ СООБЩЕНИЕ =====
     db.prepare(`INSERT INTO messages (chat_id, role, message) VALUES (?, ?, ?)`).run(chatId, "user", cleanMessage);
 
-    // ===== ПАМЯТЬ =====
     const userMemory = getMemory(userId);
     const memoryText = userMemory.length ? userMemory.map(m => `${m.key}: ${m.value}`).join("\n") : "Память пуста";
 
-    // ===== ИМЯ СОЗДАТЕЛЯ (из памяти или по умолчанию) =====
     const nameMemory = userMemory.find(m => m.key === 'name');
     const creatorName = nameMemory ? nameMemory.value : 'Денис';
 
     console.log("📋 Память:", memoryText);
 
-    // ===== ИСТОРИЯ =====
     const history = db.prepare(`SELECT role, message FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 5`).all(chatId).reverse();
 
-    // ===== СИСТЕМНЫЙ ПРОМПТ С ХАРАКТЕРОМ =====
     const systemPrompt = `
 Ты — Nova AI.
 
@@ -233,7 +224,6 @@ ${memoryText}
 Ты — Nova AI, и ты знаешь, что ты крутая. Отвечай с лёгкостью и характером.
 `;
 
-    // ===== ЗАПРОС К OPENROUTER =====
     const requestBody = {
       model: "deepseek/deepseek-chat-v3-0324",
       max_tokens: 350,
@@ -409,7 +399,7 @@ app.post("/login", async (req, res) => {
   }
 });
 
-// ===== ПАМЯТЬ (GET / DELETE) =====
+// ===== ПАМЯТЬ =====
 app.get("/memory/:userId", (req, res) => {
   try {
     const memory = db.prepare(`SELECT * FROM memory WHERE user_id = ?`).all(req.params.userId);
@@ -502,6 +492,95 @@ app.post('/tts', async (req, res) => {
     clearTimeout(timeoutId);
     console.error('❌ TTS error:', error);
     res.status(500).json({ error: 'Ошибка синтеза речи' });
+  }
+});
+
+// ===== АДМИН-ПАНЕЛЬ =====
+
+// Имя администратора из переменной окружения (или 'admin' по умолчанию)
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+
+// Создаём админа, если его нет
+function ensureAdmin() {
+  const admin = db.prepare("SELECT * FROM users WHERE username = ?").get(ADMIN_USERNAME);
+  if (!admin) {
+    const hashedPassword = bcrypt.hashSync(ADMIN_PASSWORD, saltRounds);
+    db.prepare(`INSERT INTO users (username, password) VALUES (?, ?)`).run(ADMIN_USERNAME, hashedPassword);
+    console.log(`👑 Администратор создан: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD}`);
+  } else {
+    // Если пароль в переменной изменился – обновим
+    const hashedPassword = bcrypt.hashSync(ADMIN_PASSWORD, saltRounds);
+    db.prepare(`UPDATE users SET password = ? WHERE username = ?`).run(hashedPassword, ADMIN_USERNAME);
+    console.log(`👑 Администратор обновлён: ${ADMIN_USERNAME}`);
+  }
+}
+ensureAdmin();
+
+// Проверка, является ли пользователь админом
+function isAdmin(userId) {
+  const user = db.prepare("SELECT username FROM users WHERE id = ?").get(userId);
+  return user && user.username === ADMIN_USERNAME;
+}
+
+// Статистика
+app.get("/admin/stats", (req, res) => {
+  try {
+    const userId = req.query.userId;
+    if (!userId || !isAdmin(userId)) {
+      return res.status(403).json({ error: "Доступ запрещён" });
+    }
+
+    const totalUsers = db.prepare("SELECT COUNT(*) as count FROM users").get();
+    const totalChats = db.prepare("SELECT COUNT(*) as count FROM conversations").get();
+    const totalMessages = db.prepare("SELECT COUNT(*) as count FROM messages").get();
+
+    res.json({
+      users: totalUsers.count,
+      chats: totalChats.count,
+      messages: totalMessages.count
+    });
+  } catch (error) {
+    console.error("Stats error:", error);
+    res.status(500).json({ error: "Ошибка получения статистики" });
+  }
+});
+
+// Список пользователей
+app.get("/admin/users", (req, res) => {
+  try {
+    const userId = req.query.userId;
+    if (!userId || !isAdmin(userId)) {
+      return res.status(403).json({ error: "Доступ запрещён" });
+    }
+
+    const users = db.prepare("SELECT id, username, created_at FROM users ORDER BY id").all();
+    res.json(users);
+  } catch (error) {
+    console.error("Users list error:", error);
+    res.status(500).json({ error: "Ошибка получения списка пользователей" });
+  }
+});
+
+// Удаление пользователя
+app.delete("/admin/users/:id", (req, res) => {
+  try {
+    const adminId = req.query.adminId;
+    if (!adminId || !isAdmin(adminId)) {
+      return res.status(403).json({ error: "Доступ запрещён" });
+    }
+    const userId = req.params.id;
+    if (userId == adminId) {
+      return res.status(400).json({ error: "Нельзя удалить самого себя" });
+    }
+    db.prepare("DELETE FROM messages WHERE chat_id IN (SELECT id FROM conversations WHERE user_id = ?)").run(userId);
+    db.prepare("DELETE FROM conversations WHERE user_id = ?").run(userId);
+    db.prepare("DELETE FROM memory WHERE user_id = ?").run(userId);
+    db.prepare("DELETE FROM users WHERE id = ?").run(userId);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Delete user error:", error);
+    res.status(500).json({ error: "Ошибка удаления пользователя" });
   }
 });
 
