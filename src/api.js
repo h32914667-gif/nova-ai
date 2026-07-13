@@ -144,3 +144,14 @@ export async function uploadFile(file, question = "Опиши, что изобр
 
   return await response.json(); // { success, filename, savedFilename, size, content, isImage? }
 }
+// ===== ПРОВЕРКА АДМИНА =====
+export async function checkAdmin() {
+  const userId = localStorage.getItem("userId");
+  if (!userId) return false;
+  try {
+    const response = await fetch(`${API}/admin/stats?userId=${userId}`);
+    return response.ok; // если 200 – админ
+  } catch {
+    return false;
+  }
+}

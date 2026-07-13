@@ -18,8 +18,11 @@ import {
   getMemory,
   register,
   login,
-  uploadFile
+  uploadFile,
+  checkAdmin
 } from "./api";
+
+import AdminPanel from "./components/AdminPanel"; // убедись, что файл существует
 
 import logo from "./assets/nova-logo.png";
 
@@ -61,6 +64,8 @@ export default function App() {
   const [showProfile, setShowProfile] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [profile, setProfile] = useState([]);
   const [projects, setProjects] = useState([
     {
@@ -96,6 +101,9 @@ export default function App() {
       const savedUsername = localStorage.getItem("username");
       if (savedUserId && savedUsername) {
         setUserName(savedUsername);
+        // Проверяем, админ ли пользователь
+        const adminStatus = await checkAdmin();
+        setIsAdmin(adminStatus);
       } else {
         setShowAuthModal(true);
       }
@@ -223,7 +231,7 @@ export default function App() {
     }
   }
 
-  // ===== AUTH HANDLER (ИСПРАВЛЕНО) =====
+  // ===== AUTH HANDLER =====
   const handleAuth = async () => {
     if (!authUsername || !authPassword) {
       alert("Заполните все поля");
@@ -243,6 +251,10 @@ export default function App() {
         setAuthUsername("");
         setAuthPassword("");
         await loadChats();
+
+        // Проверяем админ-статус после входа
+        const adminStatus = await checkAdmin();
+        setIsAdmin(adminStatus);
       } else {
         alert(result.error || "Ошибка");
       }
@@ -259,6 +271,7 @@ export default function App() {
     localStorage.removeItem('userId');
     localStorage.removeItem('username');
     setUserName('Гость');
+    setIsAdmin(false);
     setChats([]);
     setMessages([{ role: 'ai', text: '👋 Привет! Я Nova AI. Чем могу помочь?' }]);
     setActiveChatId(null);
@@ -279,7 +292,7 @@ export default function App() {
     }
   };
 
-  // ===== SEND MESSAGE (ИСПРАВЛЕНО: загрузка файлов через uploadFile) =====
+  // ===== SEND MESSAGE =====
   async function sendMessage(customText) {
     const userText = typeof customText === "string" ? customText : input.trim();
     if (!userText && !selectedFile) return;
@@ -298,7 +311,6 @@ export default function App() {
       setFileUploading(true);
 
       try {
-        // Используем uploadFile из api.js
         const uploadData = await uploadFile(
           selectedFile,
           userText || 'Опиши, что изображено на картинке.'
@@ -306,7 +318,6 @@ export default function App() {
 
         let replyText = uploadData.content;
 
-        // Если это не изображение (текстовый файл), отправляем содержимое в Nova
         if (!uploadData.isImage) {
           const chatId = activeChatId;
           let messageToNova = `Файл: ${uploadData.filename}\n\nСодержимое:\n${uploadData.content}`;
@@ -387,7 +398,7 @@ export default function App() {
   };
 
   // ============================================================
-  // RENDER (без изменений, оставлен как был)
+  // RENDER
   // ============================================================
   return (
     <div className="h-screen w-screen overflow-hidden flex bg-gradient-to-br from-slate-950 via-[#0a0a1a] to-slate-950 text-white relative">
@@ -417,7 +428,6 @@ export default function App() {
 
     {/* Контент */}
     <div className="relative z-10 flex flex-col items-center">
-      {/* Логотип с пульсацией и свечением */}
       <div className="relative w-32 h-32 sm:w-40 sm:h-40">
         <div className="absolute inset-0 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 blur-2xl animate-pulse-slow opacity-70"></div>
         <div className="absolute inset-[-4px] rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 animate-rotate-gradient"></div>
@@ -426,18 +436,15 @@ export default function App() {
         </div>
       </div>
 
-      {/* Название с градиентом */}
       <h1 className="mt-6 text-4xl sm:text-5xl font-bold bg-gradient-to-r from-indigo-300 via-purple-300 to-pink-300 bg-clip-text text-transparent animate-slide-up">
         Nova AI
       </h1>
 
-      {/* Статус загрузки с печатающимся текстом */}
       <div className="mt-4 text-slate-300 text-sm sm:text-base flex items-center gap-2">
         <span className="typing-text">{loadingText}</span>
         <span className="w-2 h-2 bg-indigo-400 rounded-full animate-blink"></span>
       </div>
 
-      {/* Прогресс-бары (точки) */}
       <div className="mt-6 flex gap-2">
         <div className="w-2 h-2 rounded-full bg-indigo-400 animate-loading-dot" style={{ animationDelay: '0s' }}></div>
         <div className="w-2 h-2 rounded-full bg-indigo-400 animate-loading-dot" style={{ animationDelay: '0.2s' }}></div>
@@ -446,7 +453,6 @@ export default function App() {
         <div className="w-2 h-2 rounded-full bg-indigo-400 animate-loading-dot" style={{ animationDelay: '0.8s' }}></div>
       </div>
 
-      {/* Статус "Online" с пульсацией */}
       <div className="mt-6 flex items-center gap-2 text-green-400 text-sm">
         <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
         <span>Система готова</span>
@@ -666,6 +672,15 @@ export default function App() {
                     <LogOut size={16} />
                     Выйти
                   </button>
+                  {/* КНОПКА АДМИН-ПАНЕЛИ (только если админ) */}
+                  {isAdmin && (
+                    <button
+                      onClick={() => { setShowUserMenu(false); setShowAdminPanel(true); }}
+                      className="w-full text-left px-3 py-2 hover:bg-white/10 rounded-xl text-sm text-white flex items-center gap-2 border-t border-white/10 mt-1 pt-2 transition-all duration-200 hover:scale-[1.02]"
+                    >
+                      <span>👑</span> Админ-панель
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -974,6 +989,11 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ===== ADMIM PANEL MODAL ===== */}
+      {showAdminPanel && (
+        <AdminPanel onClose={() => setShowAdminPanel(false)} />
       )}
 
       {/* ===== SCROLL BUTTON ===== */}
