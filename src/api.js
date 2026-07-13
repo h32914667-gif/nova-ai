@@ -1,5 +1,33 @@
-const API = import.meta.env.VITE_API_URL || "https://nova-api.onrender.com";
+const API = import.meta.env.VITE_API_URL || "https://nova-ai-6z2q.onrender.com";
 
+// ===== АВТОРИЗАЦИЯ =====
+export async function register(username, password) {
+  const response = await fetch(`${API}/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password })
+  });
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.error || "Ошибка регистрации");
+  }
+  return await response.json(); // { success: true, userId, username }
+}
+
+export async function login(username, password) {
+  const response = await fetch(`${API}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password })
+  });
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.error || "Ошибка входа");
+  }
+  return await response.json(); // { success: true, userId, username }
+}
+
+// ===== ЧАТЫ =====
 export async function createChat() {
   const userId = localStorage.getItem("userId");
   const response = await fetch(`${API}/chats`, {
@@ -16,11 +44,20 @@ export async function getChats() {
   return await response.json();
 }
 
+export async function deleteChat(chatId) {
+  const response = await fetch(`${API}/chats/${chatId}`, {
+    method: "DELETE"
+  });
+  return await response.json();
+}
+
+// ===== СООБЩЕНИЯ =====
 export async function getMessages(chatId) {
   const response = await fetch(`${API}/messages/${chatId}`);
   return await response.json();
 }
 
+// ===== ОСНОВНОЙ ЧАТ =====
 export async function askNova(chatId, message, onChunk) {
   const userId = localStorage.getItem("userId");
   try {
@@ -36,8 +73,8 @@ export async function askNova(chatId, message, onChunk) {
     if (!response.ok) {
       throw new Error("Ошибка сервера");
     }
-    const remaining = response.headers.get('x-ratelimit-remaining');
-    const limit = response.headers.get('x-ratelimit-limit');
+    const remaining = response.headers.get("x-ratelimit-remaining");
+    const limit = response.headers.get("x-ratelimit-limit");
     const contentType = response.headers.get("content-type");
     if (contentType && contentType.includes("application/json")) {
       const data = await response.json();
@@ -68,18 +105,13 @@ export async function askNova(chatId, message, onChunk) {
   }
 }
 
+// ===== ПАМЯТЬ =====
 export async function getMemory(userId) {
   const response = await fetch(`${API}/memory/${userId}`);
   return await response.json();
 }
 
-export async function deleteChat(chatId) {
-  const response = await fetch(`${API}/chats/${chatId}`, {
-    method: "DELETE"
-  });
-  return await response.json();
-}
-
+// ===== TTS (ОЗВУЧКА) =====
 export async function getTTS(text) {
   const response = await fetch(`${API}/tts`, {
     method: "POST",
@@ -91,4 +123,24 @@ export async function getTTS(text) {
     throw new Error(error.error || "TTS error");
   }
   return await response.arrayBuffer();
+}
+
+// ===== ЗАГРУЗКА ФАЙЛОВ (с анализом изображения) =====
+export async function uploadFile(file, question = "Опиши, что изображено на картинке.") {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("question", question);
+
+  const response = await fetch(`${API}/upload`, {
+    method: "POST",
+    body: formData
+    // Не указываем Content-Type — fetch сам добавит с правильной границей
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.error || "Ошибка загрузки файла");
+  }
+
+  return await response.json(); // { success, filename, savedFilename, size, content, isImage? }
 }
