@@ -15,7 +15,10 @@ import {
   getChats,
   getMessages,
   createChat,
-  getMemory
+  getMemory,
+  register,
+  login,
+  uploadFile
 } from "./api";
 
 import logo from "./assets/nova-logo.png";
@@ -220,7 +223,7 @@ export default function App() {
     }
   }
 
-  // ===== AUTH HANDLER =====
+  // ===== AUTH HANDLER (ИСПРАВЛЕНО) =====
   const handleAuth = async () => {
     if (!authUsername || !authPassword) {
       alert("Заполните все поля");
@@ -228,29 +231,24 @@ export default function App() {
     }
 
     try {
-      const url = authMode === "login" ? "/login" : "/register";
-      const response = await fetch(`http://localhost:3001${url}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: authUsername, password: authPassword }),
-      });
-      const data = await response.json();
+      const result = authMode === "login"
+        ? await login(authUsername, authPassword)
+        : await register(authUsername, authPassword);
 
-      if (!response.ok) {
-        alert(data.error || "Ошибка");
-        return;
+      if (result.success) {
+        localStorage.setItem("userId", result.userId);
+        localStorage.setItem("username", result.username);
+        setUserName(result.username);
+        setShowAuthModal(false);
+        setAuthUsername("");
+        setAuthPassword("");
+        await loadChats();
+      } else {
+        alert(result.error || "Ошибка");
       }
-
-      localStorage.setItem("userId", data.userId);
-      localStorage.setItem("username", data.username);
-      setUserName(data.username);
-      setShowAuthModal(false);
-      setAuthUsername("");
-      setAuthPassword("");
-      await loadChats();
     } catch (error) {
       console.error("Auth error:", error);
-      alert("Ошибка соединения с сервером");
+      alert(error.message || "Ошибка соединения с сервером");
     }
   };
 
@@ -281,7 +279,7 @@ export default function App() {
     }
   };
 
-  // ===== SEND MESSAGE =====
+  // ===== SEND MESSAGE (ИСПРАВЛЕНО: загрузка файлов через uploadFile) =====
   async function sendMessage(customText) {
     const userText = typeof customText === "string" ? customText : input.trim();
     if (!userText && !selectedFile) return;
@@ -297,26 +295,19 @@ export default function App() {
       setSending(true);
       setTyping(true);
       setNovaStatus("Думаю...");
-
-      const formData = new FormData();
-      formData.append('file', selectedFile);
-      formData.append('question', userText || 'Опиши, что изображено на картинке.');
       setFileUploading(true);
 
       try {
-        const uploadResponse = await fetch('http://localhost:3001/upload', {
-          method: 'POST',
-          body: formData,
-        });
-        const uploadData = await uploadResponse.json();
-
-        if (!uploadResponse.ok || !uploadData.success) {
-          throw new Error(uploadData.error || 'Ошибка загрузки');
-        }
+        // Используем uploadFile из api.js
+        const uploadData = await uploadFile(
+          selectedFile,
+          userText || 'Опиши, что изображено на картинке.'
+        );
 
         let replyText = uploadData.content;
-        if (uploadData.isImage) {
-        } else {
+
+        // Если это не изображение (текстовый файл), отправляем содержимое в Nova
+        if (!uploadData.isImage) {
           const chatId = activeChatId;
           let messageToNova = `Файл: ${uploadData.filename}\n\nСодержимое:\n${uploadData.content}`;
           if (userText) {
@@ -396,7 +387,7 @@ export default function App() {
   };
 
   // ============================================================
-  // RENDER
+  // RENDER (без изменений, оставлен как был)
   // ============================================================
   return (
     <div className="h-screen w-screen overflow-hidden flex bg-gradient-to-br from-slate-950 via-[#0a0a1a] to-slate-950 text-white relative">
