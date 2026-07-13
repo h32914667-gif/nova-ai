@@ -111,7 +111,7 @@ export async function getMemory(userId) {
   return await response.json();
 }
 
-// ===== TTS (ОЗВУЧКА) =====
+// ===== TTS =====
 export async function getTTS(text) {
   const response = await fetch(`${API}/tts`, {
     method: "POST",
@@ -181,6 +181,38 @@ export async function deleteUser(id) {
   if (!response.ok) {
     const err = await response.json();
     throw new Error(err.error || "Ошибка удаления");
+  }
+  return await response.json();
+}
+
+// ===== ПОДПИСКИ =====
+export async function getSubscription(userId) {
+  const response = await fetch(`${API}/subscription/${userId}`);
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Ошибка получения подписки");
+  }
+  return await response.json();
+}
+
+export async function upgradePlan(userId, plan) {
+  const response = await fetch(`${API}/subscription/upgrade`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId, plan })
+  });
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Ошибка обновления подписки");
+  }
+  return await response.json();
+}
+
+export async function getPlans() {
+  const response = await fetch(`${API}/plans`);
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Ошибка получения тарифов");
   }
   return await response.json();
 }
