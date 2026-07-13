@@ -12,6 +12,13 @@ const { rateLimit } = require('express-rate-limit');
 // ===== База данных =====
 const db = require("./database");
 
+// ===== СОЗДАЁМ ПАПКУ UPLOADS (если нет) =====
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+  console.log('📁 Папка uploads создана');
+}
+
 // ===== Проверка ключей =====
 if (!process.env.OPENROUTER_KEY) {
   console.error("❌ ОШИБКА: OPENROUTER_KEY не задан!");
@@ -50,7 +57,7 @@ app.use('/chat', chatLimiter);
 
 // ===== Multer (загрузка файлов) =====
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'uploads/'),
+  destination: (req, file, cb) => cb(null, uploadDir), // используем путь с переменной
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, uniqueSuffix + '-' + file.originalname);
