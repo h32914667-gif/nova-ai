@@ -9,7 +9,6 @@ const bcrypt = require('bcrypt');
 const saltRounds = 10;
 const { rateLimit } = require('express-rate-limit');
 
-// ===== База данных =====
 const db = require("./database");
 
 // ===== СОЗДАЁМ ПАПКУ UPLOADS =====
@@ -33,16 +32,13 @@ if (!/^[a-zA-Z0-9\-_]+$/.test(cleanedKey)) {
 process.env.OPENROUTER_KEY = cleanedKey;
 console.log("🔑 Ключ OpenRouter загружен и проверен");
 
-// ===== Инициализация приложения =====
 const app = express();
 
-// ===== CORS =====
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-
 app.use(express.json());
 
 // ===== Rate Limiter =====
@@ -198,6 +194,17 @@ function incrementUsage(userId) {
 // ===== Эндпоинты =====
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'Nova API is running' });
+});
+
+// ===== ГОСТЬ (постоянный) =====
+app.get("/guest", (req, res) => {
+  try {
+    const userId = getGuest();
+    res.json({ userId });
+  } catch (error) {
+    console.error("Guest error:", error);
+    res.status(500).json({ error: "Ошибка создания гостя" });
+  }
 });
 
 // ===== Чаты =====
@@ -608,8 +615,6 @@ app.post('/tts', async (req, res) => {
 });
 
 // ===== ПОДПИСКИ =====
-
-// Получить подписку пользователя с остатком
 app.get("/subscription/:userId", (req, res) => {
   try {
     const userId = req.params.userId;
@@ -644,24 +649,20 @@ app.get("/subscription/:userId", (req, res) => {
   }
 });
 
-// Список тарифов
 app.get("/plans", (req, res) => {
   res.json(PLANS);
 });
 
-// Апгрейд подписки (только для админа)
 app.post("/subscription/upgrade", (req, res) => {
   try {
     const { userId, plan } = req.body;
     if (!userId || !PLANS[plan]) {
       return res.status(400).json({ error: "Неверный запрос" });
     }
-
     // ⛔ ТОЛЬКО АДМИН МОЖЕТ МЕНЯТЬ ТАРИФ
     if (!isAdmin(userId)) {
       return res.status(403).json({ error: "Доступ запрещён. Только администратор может менять тариф." });
     }
-
     const expiresAt = plan === 'free' ? null : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     db.prepare(`
       INSERT INTO subscriptions (user_id, plan, expires_at) 

@@ -557,17 +557,31 @@ export default function App() {
                   </button>
                 </div>
                 <button
-                  onClick={() => {
-                    setShowAuthModal(false);
-                    localStorage.removeItem("userId");
-                    localStorage.removeItem("username");
-                    setUserName("Гость");
-                    loadChats();
-                  }}
-                  className="w-full text-sm text-red-400/80 hover:text-red-400 transition-colors duration-200 mt-2"
-                >
-                  Продолжить как гость
-                </button>
+  onClick={async () => {
+    try {
+      const response = await fetch(`${API}/guest`);
+      const data = await response.json();
+      if (data.userId) {
+        localStorage.setItem("userId", data.userId);
+        localStorage.setItem("username", "Гость");
+        setUserName("Гость");
+        setShowAuthModal(false);
+        await loadChats();
+        const adminStatus = await checkAdmin();
+        setIsAdmin(adminStatus);
+        await loadSubscription();
+      } else {
+        alert("Ошибка входа как гость");
+      }
+    } catch (error) {
+      console.error("Guest error:", error);
+      alert("Ошибка соединения с сервером");
+    }
+  }}
+  className="w-full text-sm text-red-400/80 hover:text-red-400 transition-colors duration-200 mt-2"
+>
+  Продолжить как гость
+</button>
               </div>
             </div>
           </div>
