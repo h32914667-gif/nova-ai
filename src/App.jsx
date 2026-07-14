@@ -18,11 +18,13 @@ import {
   getMemory,
   register,
   login,
+  logout,
   uploadFile,
   checkAdmin,
   getSubscription,
   upgradePlan,
-  getPlans
+  getPlans,
+  getMe
 } from "./api";
 
 import AdminPanel from "./components/AdminPanel";
@@ -102,16 +104,22 @@ export default function App() {
       setLoadingFade(true);
       await sleep(500);
       setLoading(false);
-      await loadChats();
 
-      const savedUserId = localStorage.getItem("userId");
-      const savedUsername = localStorage.getItem("username");
-      if (savedUserId && savedUsername) {
-        setUserName(savedUsername);
+      try {
+        // Получаем текущего пользователя (или создаём гостя)
+        const me = await getMe();
+        setUserName(me.username);
+
+        // Проверяем админа
         const adminStatus = await checkAdmin();
         setIsAdmin(adminStatus);
+
+        // Загружаем чаты и подписку
+        await loadChats();
         await loadSubscription();
-      } else {
+      } catch (error) {
+        console.error("Boot error:", error);
+        // Если ошибка, показываем окно входа
         setShowAuthModal(true);
       }
     }
@@ -229,8 +237,7 @@ export default function App() {
   // ===== OPEN PROFILE =====
   async function openProfile() {
     try {
-      const userId = localStorage.getItem("userId");
-      const data = await getMemory(userId);
+      const data = await getMemory();
       setProfile(Array.isArray(data) ? data : []);
       setShowProfile(true);
     } catch (error) {
@@ -241,9 +248,7 @@ export default function App() {
   // ===== ЗАГРУЗКА ПОДПИСКИ =====
   async function loadSubscription() {
     try {
-      const userId = localStorage.getItem("userId");
-      if (!userId) return;
-      const data = await getSubscription(userId);
+      const data = await getSubscription();
       setSubscriptionPlan(data.plan);
       setRemainingMessages(data.remaining);
       setUserPlan(data.name);
@@ -265,16 +270,18 @@ export default function App() {
         : await register(authUsername, authPassword);
 
       if (result.success) {
-        localStorage.setItem("userId", result.userId);
-        localStorage.setItem("username", result.username);
+        // Сессия уже создана на сервере, обновляем состояние
         setUserName(result.username);
         setShowAuthModal(false);
         setAuthUsername("");
         setAuthPassword("");
+        // Перезагружаем данные
         await loadChats();
         const adminStatus = await checkAdmin();
         setIsAdmin(adminStatus);
         await loadSubscription();
+        // Закрываем модалку входа
+        setShowAuthModal(false);
       } else {
         alert(result.error || "Ошибка");
       }
@@ -286,11 +293,14 @@ export default function App() {
 
   // ===== LOGOUT =====
   const handleLogout = () => setShowLogoutModal(true);
-  const confirmLogout = () => {
+  const confirmLogout = async () => {
+    try {
+      await logout();
+    } catch (e) {
+      console.error("Logout error:", e);
+    }
     setShowLogoutModal(false);
-    localStorage.removeItem('userId');
-    localStorage.removeItem('username');
-    setUserName('Гость');
+    setUserName("Гость");
     setIsAdmin(false);
     setChats([]);
     setMessages([{ role: 'ai', text: '👋 Привет! Я Nova AI. Чем могу помочь?' }]);
@@ -301,6 +311,8 @@ export default function App() {
     setShowSettings(false);
     setShowProjects(false);
     setShowUserMenu(false);
+    setRemainingMessages(null);
+    setUserPlan("Free Plan");
     setShowAuthModal(true);
   };
 
@@ -438,7 +450,7 @@ export default function App() {
         <div className="absolute top-[30%] left-[40%] w-[50%] h-[50%] rounded-full bg-pink-500/10 blur-[100px] animate-aurora3"></div>
       </div>
 
-      {/* ===== LOADING ===== (без изменений, оставлен как был) */}
+      {/* ===== LOADING ===== */}
       {loading && (
         <div
           className={`fixed inset-0 z-50 flex flex-col items-center justify-center transition-all duration-1000 ${
@@ -448,7 +460,6 @@ export default function App() {
             background: "radial-gradient(ellipse at 50% 50%, #0f0c29, #1a1a3e, #0a0a1a)"
           }}
         >
-          {/* ... (оставляем как было) ... */}
           <div className="absolute inset-0 overflow-hidden pointer-events-none">
             <div className="absolute top-[-30%] left-[-20%] w-[70%] h-[70%] rounded-full bg-indigo-500/20 blur-[100px] animate-aurora1"></div>
             <div className="absolute bottom-[-30%] right-[-20%] w-[70%] h-[70%] rounded-full bg-purple-500/20 blur-[100px] animate-aurora2"></div>
@@ -482,10 +493,9 @@ export default function App() {
         </div>
       )}
 
-      {/* ===== AUTH MODAL ===== (без изменений, оставлен как был) */}
+      {/* ===== AUTH MODAL ===== */}
       {showAuthModal && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-3xl flex items-center justify-center animate-scaleIn p-4">
-          {/* ... оставляем как есть ... */}
           <div className="relative w-full max-w-[420px] bg-white/5 backdrop-blur-2xl rounded-3xl border border-white/10 shadow-2xl shadow-indigo-500/10 p-6 sm:p-8 overflow-hidden">
             <div className="absolute -top-20 -right-20 w-64 h-64 bg-indigo-500/20 rounded-full blur-3xl"></div>
             <div className="absolute -bottom-20 -left-20 w-64 h-64 bg-purple-500/20 rounded-full blur-3xl"></div>
@@ -556,32 +566,7 @@ export default function App() {
                       : "Уже есть аккаунт? Войдите"}
                   </button>
                 </div>
-                <button
-  onClick={async () => {
-    try {
-      const response = await fetch(`${API}/guest`);
-      const data = await response.json();
-      if (data.userId) {
-        localStorage.setItem("userId", data.userId);
-        localStorage.setItem("username", "Гость");
-        setUserName("Гость");
-        setShowAuthModal(false);
-        await loadChats();
-        const adminStatus = await checkAdmin();
-        setIsAdmin(adminStatus);
-        await loadSubscription();
-      } else {
-        alert("Ошибка входа как гость");
-      }
-    } catch (error) {
-      console.error("Guest error:", error);
-      alert("Ошибка соединения с сервером");
-    }
-  }}
-  className="w-full text-sm text-red-400/80 hover:text-red-400 transition-colors duration-200 mt-2"
->
-  Продолжить как гость
-</button>
+                {/* Кнопка "Продолжить как гость" удалена – гость создаётся автоматически */}
               </div>
             </div>
           </div>
@@ -680,7 +665,6 @@ export default function App() {
                     <div className="font-medium text-white text-sm">{userName}</div>
                     <div className="text-xs text-slate-400">{userPlan}</div>
                   </div>
-                  {/* Отображение остатка сообщений */}
                   <div className="px-3 py-2 border-b border-white/10 text-xs text-slate-400">
                     Осталось сообщений: {remainingMessages === Infinity ? '∞' : remainingMessages}
                   </div>
@@ -752,7 +736,7 @@ export default function App() {
         )}
       </aside>
 
-      {/* ===== MAIN ===== (без изменений, оставлен как был, за исключением передачи пропсов в Subscription) */}
+      {/* ===== MAIN ===== */}
       <main className="flex-1 h-screen min-w-0 flex flex-col relative z-10">
         <button
           onClick={() => setSidebarOpen(true)}
@@ -1043,7 +1027,7 @@ export default function App() {
 
       {/* ===== SUBSCRIPTION PANEL ===== */}
       {showSubscription && (
-        <Subscription userId={localStorage.getItem("userId")} onClose={() => setShowSubscription(false)} />
+        <Subscription onClose={() => setShowSubscription(false)} />
       )}
 
       {/* ===== SCROLL BUTTON ===== */}
