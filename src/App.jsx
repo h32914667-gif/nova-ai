@@ -18,13 +18,11 @@ import {
   getMemory,
   register,
   login,
-  logout,
   uploadFile,
   checkAdmin,
   getSubscription,
   upgradePlan,
-  getPlans,
-  getMe
+  getPlans
 } from "./api";
 
 import AdminPanel from "./components/AdminPanel";
@@ -104,22 +102,16 @@ export default function App() {
       setLoadingFade(true);
       await sleep(500);
       setLoading(false);
+      await loadChats();
 
-      try {
-        // Получаем текущего пользователя (или создаём гостя)
-        const me = await getMe();
-        setUserName(me.username);
-
-        // Проверяем админа
+      const savedUserId = localStorage.getItem("userId");
+      const savedUsername = localStorage.getItem("username");
+      if (savedUserId && savedUsername) {
+        setUserName(savedUsername);
         const adminStatus = await checkAdmin();
         setIsAdmin(adminStatus);
-
-        // Загружаем чаты и подписку
-        await loadChats();
         await loadSubscription();
-      } catch (error) {
-        console.error("Boot error:", error);
-        // Если ошибка, показываем окно входа
+      } else {
         setShowAuthModal(true);
       }
     }
@@ -237,7 +229,9 @@ export default function App() {
   // ===== OPEN PROFILE =====
   async function openProfile() {
     try {
-      const data = await getMemory();
+      const userId = localStorage.getItem("userId");
+      if (!userId) return;
+      const data = await getMemory(userId);
       setProfile(Array.isArray(data) ? data : []);
       setShowProfile(true);
     } catch (error) {
@@ -248,7 +242,9 @@ export default function App() {
   // ===== ЗАГРУЗКА ПОДПИСКИ =====
   async function loadSubscription() {
     try {
-      const data = await getSubscription();
+      const userId = localStorage.getItem("userId");
+      if (!userId) return;
+      const data = await getSubscription(userId);
       setSubscriptionPlan(data.plan);
       setRemainingMessages(data.remaining);
       setUserPlan(data.name);
@@ -270,18 +266,16 @@ export default function App() {
         : await register(authUsername, authPassword);
 
       if (result.success) {
-        // Сессия уже создана на сервере, обновляем состояние
+        localStorage.setItem("userId", result.userId);
+        localStorage.setItem("username", result.username);
         setUserName(result.username);
         setShowAuthModal(false);
         setAuthUsername("");
         setAuthPassword("");
-        // Перезагружаем данные
         await loadChats();
         const adminStatus = await checkAdmin();
         setIsAdmin(adminStatus);
         await loadSubscription();
-        // Закрываем модалку входа
-        setShowAuthModal(false);
       } else {
         alert(result.error || "Ошибка");
       }
@@ -293,14 +287,11 @@ export default function App() {
 
   // ===== LOGOUT =====
   const handleLogout = () => setShowLogoutModal(true);
-  const confirmLogout = async () => {
-    try {
-      await logout();
-    } catch (e) {
-      console.error("Logout error:", e);
-    }
+  const confirmLogout = () => {
     setShowLogoutModal(false);
-    setUserName("Гость");
+    localStorage.removeItem('userId');
+    localStorage.removeItem('username');
+    setUserName('Гость');
     setIsAdmin(false);
     setChats([]);
     setMessages([{ role: 'ai', text: '👋 Привет! Я Nova AI. Чем могу помочь?' }]);
@@ -369,7 +360,6 @@ export default function App() {
         }
 
         setMessages(prev => [...prev, { role: 'ai', text: replyText }]);
-        // Обновляем остаток сообщений (если не Infinity)
         if (remainingMessages !== null && remainingMessages !== Infinity) {
           setRemainingMessages(prev => prev - 1);
         }
@@ -407,7 +397,6 @@ export default function App() {
         setMessages(prev => [...prev, { role: "ai", text: novaText }]);
         setNovaStatus("Готова");
 
-        // Обновляем остаток сообщений
         if (remainingMessages !== null && remainingMessages !== Infinity) {
           setRemainingMessages(prev => prev - 1);
         }
@@ -566,7 +555,32 @@ export default function App() {
                       : "Уже есть аккаунт? Войдите"}
                   </button>
                 </div>
-                {/* Кнопка "Продолжить как гость" удалена – гость создаётся автоматически */}
+                <button
+                  onClick={async () => {
+                    try {
+                      const response = await fetch(`${import.meta.env.VITE_API_URL || "https://nova-ai-6z2q.onrender.com"}/guest`);
+                      const data = await response.json();
+                      if (data.userId) {
+                        localStorage.setItem("userId", data.userId);
+                        localStorage.setItem("username", "Гость");
+                        setUserName("Гость");
+                        setShowAuthModal(false);
+                        await loadChats();
+                        const adminStatus = await checkAdmin();
+                        setIsAdmin(adminStatus);
+                        await loadSubscription();
+                      } else {
+                        alert("Ошибка входа как гость");
+                      }
+                    } catch (error) {
+                      console.error("Guest error:", error);
+                      alert("Ошибка соединения с сервером");
+                    }
+                  }}
+                  className="w-full text-sm text-red-400/80 hover:text-red-400 transition-colors duration-200 mt-2"
+                >
+                  Продолжить как гость
+                </button>
               </div>
             </div>
           </div>

@@ -5,7 +5,6 @@ export async function register(username, password) {
   const response = await fetch(`${API}/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    credentials: 'include',
     body: JSON.stringify({ username, password })
   });
   if (!response.ok) {
@@ -19,7 +18,6 @@ export async function login(username, password) {
   const response = await fetch(`${API}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    credentials: 'include',
     body: JSON.stringify({ username, password })
   });
   if (!response.ok) {
@@ -29,70 +27,44 @@ export async function login(username, password) {
   return await response.json();
 }
 
-export async function logout() {
-  const response = await fetch(`${API}/logout`, {
-    method: "POST",
-    credentials: 'include'
-  });
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.error || "Ошибка выхода");
-  }
-  return await response.json();
-}
-
-export async function getMe() {
-  const response = await fetch(`${API}/me`, {
-    credentials: 'include'
-  });
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.error || "Ошибка получения пользователя");
-  }
-  return await response.json();
-}
-
 // ===== ЧАТЫ =====
 export async function createChat() {
+  const userId = localStorage.getItem("userId");
   const response = await fetch(`${API}/chats`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    credentials: 'include'
+    body: JSON.stringify({ userId })
   });
   return await response.json();
 }
 
 export async function getChats() {
-  const response = await fetch(`${API}/chats`, {
-    credentials: 'include'
-  });
+  const userId = localStorage.getItem("userId");
+  const response = await fetch(`${API}/chats/${userId}`);
   return await response.json();
 }
 
 export async function deleteChat(chatId) {
   const response = await fetch(`${API}/chats/${chatId}`, {
-    method: "DELETE",
-    credentials: 'include'
+    method: "DELETE"
   });
   return await response.json();
 }
 
 // ===== СООБЩЕНИЯ =====
 export async function getMessages(chatId) {
-  const response = await fetch(`${API}/messages/${chatId}`, {
-    credentials: 'include'
-  });
+  const response = await fetch(`${API}/messages/${chatId}`);
   return await response.json();
 }
 
 // ===== ОСНОВНОЙ ЧАТ =====
 export async function askNova(chatId, message, onChunk) {
+  const userId = localStorage.getItem("userId");
   try {
     const response = await fetch(`${API}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: 'include',
-      body: JSON.stringify({ chatId, message })
+      body: JSON.stringify({ userId, chatId, message })
     });
     if (response.status === 429) {
       const errorData = await response.json();
@@ -134,18 +106,8 @@ export async function askNova(chatId, message, onChunk) {
 }
 
 // ===== ПАМЯТЬ =====
-export async function getMemory() {
-  const response = await fetch(`${API}/memory`, {
-    credentials: 'include'
-  });
-  return await response.json();
-}
-
-export async function deleteMemory() {
-  const response = await fetch(`${API}/memory`, {
-    method: "DELETE",
-    credentials: 'include'
-  });
+export async function getMemory(userId) {
+  const response = await fetch(`${API}/memory/${userId}`);
   return await response.json();
 }
 
@@ -154,7 +116,6 @@ export async function getTTS(text) {
   const response = await fetch(`${API}/tts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    credentials: 'include',
     body: JSON.stringify({ text })
   });
   if (!response.ok) {
@@ -171,7 +132,6 @@ export async function uploadFile(file, question = "Опиши, что изобр
   formData.append("question", question);
   const response = await fetch(`${API}/upload`, {
     method: "POST",
-    credentials: 'include',
     body: formData
   });
   if (!response.ok) {
@@ -183,10 +143,10 @@ export async function uploadFile(file, question = "Опиши, что изобр
 
 // ===== АДМИН-ПАНЕЛЬ =====
 export async function checkAdmin() {
+  const userId = localStorage.getItem("userId");
+  if (!userId) return false;
   try {
-    const response = await fetch(`${API}/admin/stats`, {
-      credentials: 'include'
-    });
+    const response = await fetch(`${API}/admin/stats?userId=${userId}`);
     return response.ok;
   } catch {
     return false;
@@ -194,9 +154,8 @@ export async function checkAdmin() {
 }
 
 export async function getStats() {
-  const response = await fetch(`${API}/admin/stats`, {
-    credentials: 'include'
-  });
+  const userId = localStorage.getItem("userId");
+  const response = await fetch(`${API}/admin/stats?userId=${userId}`);
   if (!response.ok) {
     const err = await response.json();
     throw new Error(err.error || "Ошибка статистики");
@@ -205,9 +164,8 @@ export async function getStats() {
 }
 
 export async function getUsers() {
-  const response = await fetch(`${API}/admin/users`, {
-    credentials: 'include'
-  });
+  const userId = localStorage.getItem("userId");
+  const response = await fetch(`${API}/admin/users?userId=${userId}`);
   if (!response.ok) {
     const err = await response.json();
     throw new Error(err.error || "Ошибка списка пользователей");
@@ -216,9 +174,9 @@ export async function getUsers() {
 }
 
 export async function deleteUser(id) {
-  const response = await fetch(`${API}/admin/users/${id}`, {
-    method: "DELETE",
-    credentials: 'include'
+  const adminId = localStorage.getItem("userId");
+  const response = await fetch(`${API}/admin/users/${id}?adminId=${adminId}`, {
+    method: "DELETE"
   });
   if (!response.ok) {
     const err = await response.json();
@@ -228,10 +186,8 @@ export async function deleteUser(id) {
 }
 
 // ===== ПОДПИСКИ =====
-export async function getSubscription() {
-  const response = await fetch(`${API}/subscription`, {
-    credentials: 'include'
-  });
+export async function getSubscription(userId) {
+  const response = await fetch(`${API}/subscription/${userId}`);
   if (!response.ok) {
     const err = await response.json();
     throw new Error(err.error || "Ошибка получения подписки");
@@ -239,12 +195,11 @@ export async function getSubscription() {
   return await response.json();
 }
 
-export async function upgradePlan(plan) {
+export async function upgradePlan(userId, plan) {
   const response = await fetch(`${API}/subscription/upgrade`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    credentials: 'include',
-    body: JSON.stringify({ plan })
+    body: JSON.stringify({ userId, plan })
   });
   if (!response.ok) {
     const err = await response.json();
@@ -254,9 +209,7 @@ export async function upgradePlan(plan) {
 }
 
 export async function getPlans() {
-  const response = await fetch(`${API}/plans`, {
-    credentials: 'include'
-  });
+  const response = await fetch(`${API}/plans`);
   if (!response.ok) {
     const err = await response.json();
     throw new Error(err.error || "Ошибка получения тарифов");
