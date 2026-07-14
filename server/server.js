@@ -66,7 +66,7 @@ const fileFilter = (req, file, cb) => {
 };
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 }, fileFilter });
 
-// ===== СОЗДАНИЕ ТАБЛИЦ (с защитой от ошибок) =====
+// ===== СОЗДАНИЕ ТАБЛИЦ =====
 try {
   db.exec(`
     CREATE TABLE IF NOT EXISTS subscriptions (
@@ -181,7 +181,6 @@ function cleanText(text) {
   return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
 }
 
-// ===== ЛИМИТЫ С ЗАЩИТОЙ ОТ ОШИБОК =====
 function checkLimit(userId) {
   try {
     const today = new Date().toISOString().slice(0,10);
@@ -268,7 +267,6 @@ app.post("/chat", async (req, res) => {
     if (!chatId) return res.json({ reply: "Ошибка: чат не выбран" });
     if (!message) return res.json({ reply: "Напиши сообщение" });
 
-    // === ПРОВЕРКА ЛИМИТА (с защитой) ===
     const limitCheck = checkLimit(userId);
     if (!limitCheck.allowed) {
       return res.json({
@@ -279,7 +277,6 @@ app.post("/chat", async (req, res) => {
     const cleanMessage = cleanText(message);
     const lower = cleanMessage.toLowerCase();
 
-    // ===== ИНТЕЛЛЕКТУАЛЬНЫЙ ОТВЕТ НА "КТО ТЫ" =====
     if (lower.includes("кто ты") || lower === "кто ты" || lower.includes("ты кто") || lower.includes("кто такая")) {
       const greetings = [
         "Я Nova AI — твой персональный ИИ-ассистент. Меня создал Денис, чтобы помогать тебе в разработке, проектах и повседневных задачах. Горжусь быть частью этого проекта! 🚀",
@@ -292,7 +289,6 @@ app.post("/chat", async (req, res) => {
       return res.json({ reply: randomReply });
     }
 
-    // ===== КОМАНДЫ =====
     if (lower.startsWith("запомни")) {
       const text = cleanMessage.replace(/запомни/i, "").trim();
       saveMemory(userId, "fact", text, true);
@@ -315,10 +311,8 @@ app.post("/chat", async (req, res) => {
       }
     }
 
-    // ===== СОХРАНЯЕМ СООБЩЕНИЕ =====
     db.prepare(`INSERT INTO messages (chat_id, role, message) VALUES (?, ?, ?)`).run(chatId, "user", cleanMessage);
 
-    // ===== ПАМЯТЬ =====
     const userMemory = getMemory(userId);
     const memoryText = userMemory.length ? userMemory.map(m => `${m.key}: ${m.value}`).join("\n") : "Память пуста";
 
@@ -327,10 +321,8 @@ app.post("/chat", async (req, res) => {
 
     console.log("📋 Память:", memoryText);
 
-    // ===== ИСТОРИЯ =====
     const history = db.prepare(`SELECT role, message FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 5`).all(chatId).reverse();
 
-    // ===== СИСТЕМНЫЙ ПРОМПТ =====
     const systemPrompt = `
 Ты — Nova AI.
 
@@ -360,7 +352,6 @@ ${memoryText}
 Ты — Nova AI, и ты знаешь, что ты крутая. Отвечай с лёгкостью и характером.
 `;
 
-    // ===== ЗАПРОС К OPENROUTER =====
     const requestBody = {
       model: "deepseek/deepseek-chat-v3-0324",
       max_tokens: 350,
@@ -410,7 +401,6 @@ ${memoryText}
       db.prepare(`INSERT INTO messages (chat_id, role, message) VALUES (?, ?, ?)`).run(chatId, "ai", reply);
     }
 
-    // Увеличиваем счётчик использования (с защитой)
     incrementUsage(userId);
 
     res.json({ reply });
@@ -424,11 +414,216 @@ ${memoryText}
 
 // ===== ЗАГРУЗКА ФАЙЛОВ =====
 app.post('/upload', upload.single('file'), async (req, res) => {
-  // ... полный код загрузки файлов из предыдущих версий (не меняется)
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Файл не загружен' });
+
+    const filePath = req.file.path;
+    const mimetype = req.file.mimetype;
+    const filename = req.file.originalname;
+    const userQuestion = req.body.question || 'Опиши, что изображено на картинке.';
+
+    if (mimetype === 'text/plain') {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      fs.unlinkSync(filePath);
+      return res.json({
+        success: true,
+        filename,
+        savedFilename: req.file.filename,
+        size: req.file.size,
+        content
+      });
+    }
+
+    if (mimetype.startsWith('image/')) {
+      const imageBuffer = fs.readFileSync(filePath);
+      const base64Image = imageBuffer.toString('base64');
+      const mimeType = mimetype;
+
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${process.env.OPENROUTER_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "openai/gpt-4o",
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: userQuestion },
+                {
+                  type: "image_url",
+                  image_url: { url: `data:${mimeType};base64,${base64Image}` }
+                }
+              ]
+            }
+          ],
+          max_tokens: 500,
+          temperature: 0.7
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("OpenRouter Vision error:", response.status, errorText);
+        fs.unlinkSync(filePath);
+        return res.status(500).json({ error: 'Ошибка анализа изображения' });
+      }
+
+      const data = await response.json();
+      const analysis = data.choices?.[0]?.message?.content || 'Не удалось распознать изображение.';
+
+      fs.unlinkSync(filePath);
+
+      return res.json({
+        success: true,
+        filename,
+        savedFilename: req.file.filename,
+        size: req.file.size,
+        content: analysis,
+        isImage: true
+      });
+    }
+
+    return res.status(400).json({ error: 'Неподдерживаемый формат файла' });
+
+  } catch (error) {
+    console.error('Upload error:', error);
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    res.status(500).json({ error: 'Ошибка загрузки файла' });
+  }
 });
 
-// ===== РЕГИСТРАЦИЯ, ЛОГИН, ПАМЯТЬ, УДАЛИТЬ ЧАТ, TTS =====
-// ... все эти эндпоинты остаются без изменений (они есть в твоём текущем коде)
+// ===== РЕГИСТРАЦИЯ =====
+app.post("/register", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: "Заполните все поля" });
+    const existing = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
+    if (existing) return res.status(400).json({ error: "Пользователь уже существует" });
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    const result = db.prepare(`INSERT INTO users (username, password) VALUES (?, ?)`).run(username, hashedPassword);
+    res.json({ success: true, userId: result.lastInsertRowid, username });
+  } catch (error) {
+    console.error("Register error:", error);
+    res.status(500).json({ error: "Ошибка регистрации" });
+  }
+});
+
+// ===== ЛОГИН =====
+app.post("/login", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: "Заполните все поля" });
+    const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
+    if (!user) return res.status(400).json({ error: "Пользователь не найден" });
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).json({ error: "Неверный пароль" });
+    res.json({ success: true, userId: user.id, username: user.username });
+  } catch (error) {
+    console.error("Login error:", error);
+    res.status(500).json({ error: "Ошибка входа" });
+  }
+});
+
+// ===== ПАМЯТЬ =====
+app.get("/memory/:userId", (req, res) => {
+  try {
+    const memory = db.prepare(`SELECT * FROM memory WHERE user_id = ?`).all(req.params.userId);
+    res.json(memory);
+  } catch (error) {
+    console.log(error);
+    res.status(500).json([]);
+  }
+});
+
+app.delete("/memory/:userId", (req, res) => {
+  try {
+    db.prepare(`DELETE FROM memory WHERE user_id = ?`).run(req.params.userId);
+    res.json({ success: true });
+  } catch (error) {
+    console.log("DELETE MEMORY ERROR:", error);
+    res.status(500).json({ success: false });
+  }
+});
+
+// ===== УДАЛИТЬ ЧАТ =====
+app.delete("/chats/:id", (req, res) => {
+  try {
+    const id = req.params.id;
+    db.prepare(`DELETE FROM messages WHERE chat_id = ?`).run(id);
+    db.prepare(`DELETE FROM conversations WHERE id = ?`).run(id);
+    res.json({ success: true });
+  } catch (error) {
+    console.log("DELETE CHAT ERROR:", error);
+    res.status(500).json({ success: false });
+  }
+});
+
+// ===== TTS =====
+app.post('/tts', async (req, res) => {
+  const { text } = req.body;
+  console.log("📥 TTS запрос, текст:", text);
+  if (!text) {
+    return res.status(400).json({ error: 'Нет текста' });
+  }
+
+  const apiKey = process.env.YANDEX_API_KEY;
+  if (!apiKey) {
+    console.error("❌ YANDEX_API_KEY отсутствует");
+    return res.status(500).json({ error: 'Ключ Яндекс не настроен' });
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    console.warn("⏰ Таймаут TTS (15 сек)");
+    controller.abort();
+  }, 15000);
+
+  try {
+    console.log("🔑 Отправка запроса к Яндекс SpeechKit...");
+    const response = await fetch('https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Api-Key ${apiKey}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        text: text,
+        lang: 'ru-RU',
+        voice: 'oksana',
+        format: 'mp3',
+        speed: 1.0,
+        emotion: 'neutral'
+      }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    console.log("📬 Статус ответа Яндекс:", response.status);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Яндекс TTS ошибка:', response.status, errorText);
+      return res.status(500).json({ error: 'Ошибка синтеза речи: ' + errorText });
+    }
+
+    const audioBuffer = await response.arrayBuffer();
+    console.log("✅ TTS успешно, размер аудио:", audioBuffer.byteLength);
+
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.send(Buffer.from(audioBuffer));
+
+  } catch (error) {
+    clearTimeout(timeoutId);
+    console.error('❌ TTS error:', error);
+    res.status(500).json({ error: 'Ошибка синтеза речи' });
+  }
+});
 
 // ===== ПОДПИСКИ =====
 app.get("/subscription/:userId", (req, res) => {
