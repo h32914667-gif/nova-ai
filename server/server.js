@@ -35,6 +35,9 @@ console.log("🔑 Ключ OpenRouter загружен и проверен");
 
 const app = express();
 
+// ===== ДОВЕРЯТЬ ПРОКСИ (необходимо для secure кук на Render) =====
+app.set('trust proxy', 1);
+
 // ===== НАСТРОЙКА СЕССИЙ =====
 app.use(session({
   secret: process.env.SESSION_SECRET || 'super-secret-key-2025',
@@ -43,23 +46,33 @@ app.use(session({
   cookie: {
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
-    maxAge: 1000 * 60 * 60 * 24 * 7 // 7 дней
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    maxAge: 1000 * 60 * 60 * 24 * 7
   }
 }));
+
+// ===== ЛОГИРОВАНИЕ СЕССИИ (для отладки) =====
+app.use((req, res, next) => {
+  console.log('🔍 Сессия:', req.session);
+  console.log('🔍 Cookie header:', req.headers.cookie);
+  next();
+});
 
 // ===== CORS (закрытый) =====
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5173',
   process.env.FRONTEND_URL || 'https://nova-ai-ten-ashen.vercel.app'
-];
+].filter(Boolean);
 
 app.use(cors({
   origin: function (origin, callback) {
+    // Разрешаем запросы без origin (например, от curl или мобильных приложений)
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin) || allowedOrigins.some(o => o instanceof RegExp && o.test(origin))) {
       callback(null, true);
     } else {
+      console.warn('⚠️ CORS blocked origin:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
@@ -249,6 +262,7 @@ function incrementUsage(userId) {
 
 // ===== MIDDLEWARE ДЛЯ ПРОВЕРКИ АВТОРИЗАЦИИ =====
 function requireAuth(req, res, next) {
+  console.log('🔐 requireAuth: userId =', req.session.userId);
   if (!req.session.userId) {
     return res.status(401).json({ error: 'Не авторизован' });
   }
@@ -271,6 +285,7 @@ app.get("/guest", (req, res) => {
   try {
     const userId = getGuest();
     req.session.userId = userId;
+    console.log('✅ Гость: userId установлен в сессию:', req.session.userId);
     res.json({ userId });
   } catch (error) {
     console.error("Guest error:", error);
@@ -288,6 +303,7 @@ app.post("/register", async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, saltRounds);
     const result = db.prepare(`INSERT INTO users (username, password) VALUES (?, ?)`).run(username, hashedPassword);
     req.session.userId = result.lastInsertRowid;
+    console.log('✅ Регистрация: userId установлен в сессию:', req.session.userId);
     res.json({ success: true, userId: result.lastInsertRowid, username });
   } catch (error) {
     console.error("Register error:", error);
@@ -305,6 +321,7 @@ app.post("/login", loginLimiter, async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) return res.status(400).json({ error: "Неверный пароль" });
     req.session.userId = user.id;
+    console.log('✅ Логин: userId установлен в сессию:', req.session.userId);
     res.json({ success: true, userId: user.id, username: user.username });
   } catch (error) {
     console.error("Login error:", error);
