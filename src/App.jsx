@@ -112,13 +112,11 @@ export default function App() {
 
       if (savedUserId && savedUsername && token) {
         setUserName(savedUsername);
-        // Загружаем данные только если есть токен (авторизованы)
         await loadChats();
         const adminStatus = await checkAdmin();
         setIsAdmin(adminStatus);
         await loadSubscription();
       } else {
-        // Показываем модалку авторизации
         setShowAuthModal(true);
       }
     }
@@ -269,7 +267,6 @@ export default function App() {
         : await register(authUsername, authPassword);
 
       if (result.success) {
-        // Сохраняем токен (он уже сохранён в api.js, но сохраним и здесь)
         if (result.token) {
           localStorage.setItem("token", result.token);
         }
@@ -296,8 +293,7 @@ export default function App() {
   const handleLogout = () => setShowLogoutModal(true);
   const confirmLogout = () => {
     setShowLogoutModal(false);
-    // Очищаем всё: токен, userId, username
-    logout(); // эта функция удаляет токен из localStorage
+    logout();
     localStorage.removeItem('userId');
     localStorage.removeItem('username');
     setUserName('Гость');
@@ -446,6 +442,23 @@ export default function App() {
         <div className="absolute top-[-50%] left-[-20%] w-[80%] h-[80%] rounded-full bg-indigo-500/20 blur-[120px] animate-aurora1"></div>
         <div className="absolute bottom-[-30%] right-[-20%] w-[70%] h-[70%] rounded-full bg-purple-500/20 blur-[120px] animate-aurora2"></div>
         <div className="absolute top-[30%] left-[40%] w-[50%] h-[50%] rounded-full bg-pink-500/10 blur-[100px] animate-aurora3"></div>
+
+        {/* ===== ПАРТИКЛЫ (ЗВЁЗДОЧКИ) ===== */}
+        {Array.from({ length: 30 }).map((_, i) => (
+          <div
+            key={i}
+            className="absolute rounded-full bg-white/30 animate-float-particle"
+            style={{
+              top: `${Math.random() * 100}%`,
+              left: `${Math.random() * 100}%`,
+              width: `${2 + Math.random() * 4}px`,
+              height: `${2 + Math.random() * 4}px`,
+              animationDelay: `${Math.random() * 8}s`,
+              animationDuration: `${5 + Math.random() * 10}s`,
+              opacity: 0.1 + Math.random() * 0.3,
+            }}
+          />
+        ))}
       </div>
 
       {/* ===== LOADING ===== */}
@@ -608,7 +621,7 @@ export default function App() {
           <>
             <div className="flex items-center gap-3 mb-8">
               <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 p-0.5 shadow-lg shadow-indigo-500/30 animate-pulse-glow">
-                <img src={logo} className="w-full h-full rounded-full" />
+                <img src={logo} className="w-full h-full rounded-full animate-float" />
               </div>
               <div>
                 <h1 className="font-bold text-xl bg-gradient-to-r from-indigo-300 to-purple-300 bg-clip-text text-transparent">Nova AI</h1>
@@ -772,24 +785,24 @@ export default function App() {
         </button>
 
         <div className="flex-1 overflow-y-auto chat-scroll-container custom-scrollbar">
-          <div className="max-w-4xl mx-auto px-3 sm:px-4 space-y-4 sm:space-y-5 py-4 sm:py-6">
+          <div className="max-w-4xl mx-auto px-3 sm:px-4 space-y-4 sm:space-y-5 py-4 sm:py-6 animate-fadeIn">
             {showHome && (
               <div className="h-full flex flex-col items-center justify-center animate-fadeIn text-center px-4">
                 <div className="w-24 h-24 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 p-1 shadow-2xl shadow-indigo-500/30 mb-6 animate-pulse-glow">
-                  <img src={logo} className="w-full h-full rounded-full" />
+                  <img src={logo} className="w-full h-full rounded-full animate-float" />
                 </div>
                 <h1 className="text-3xl sm:text-5xl font-bold bg-gradient-to-r from-indigo-300 via-purple-300 to-pink-300 bg-clip-text text-transparent animate-fadeIn">
                   Nova AI Dashboard
                 </h1>
                 <p className="mt-4 text-base sm:text-lg text-slate-400 animate-fadeIn">Центр управления твоим AI</p>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-5 mt-8 w-full max-w-md sm:max-w-none">
-                  <div className="group p-4 sm:p-6 rounded-3xl bg-white/5 backdrop-blur-sm border border-white/10 hover:bg-white/10 transition-all duration-300 hover:scale-[1.05] shadow-lg hover:shadow-indigo-500/10">
+                  <div className="group p-4 sm:p-6 rounded-3xl bg-white/5 backdrop-blur-sm border border-white/10 hover:bg-white/10 transition-all duration-300 hover:scale-[1.05] shadow-lg hover:shadow-indigo-500/10 animate-fadeInUp" style={{ animationDelay: '0ms' }}>
                     💬<p className="font-bold mt-2 text-sm sm:text-base">Чаты</p><p className="text-slate-400 text-sm sm:text-base">{chats.length}</p>
                   </div>
-                  <div className="group p-4 sm:p-6 rounded-3xl bg-white/5 backdrop-blur-sm border border-white/10 hover:bg-white/10 transition-all duration-300 hover:scale-[1.05] shadow-lg hover:shadow-purple-500/10">
+                  <div className="group p-4 sm:p-6 rounded-3xl bg-white/5 backdrop-blur-sm border border-white/10 hover:bg-white/10 transition-all duration-300 hover:scale-[1.05] shadow-lg hover:shadow-purple-500/10 animate-fadeInUp" style={{ animationDelay: '100ms' }}>
                     🧠<p className="font-bold mt-2 text-sm sm:text-base">Память</p><p className="text-slate-400 text-sm sm:text-base">{profile.length}</p>
                   </div>
-                  <div className="group p-4 sm:p-6 rounded-3xl bg-white/5 backdrop-blur-sm border border-white/10 hover:bg-white/10 transition-all duration-300 hover:scale-[1.05] shadow-lg hover:shadow-pink-500/10">
+                  <div className="group p-4 sm:p-6 rounded-3xl bg-white/5 backdrop-blur-sm border border-white/10 hover:bg-white/10 transition-all duration-300 hover:scale-[1.05] shadow-lg hover:shadow-pink-500/10 animate-fadeInUp" style={{ animationDelay: '200ms' }}>
                     🟢<p className="font-bold mt-2 text-sm sm:text-base">Статус</p><p className="text-green-400 text-sm sm:text-base">Online</p>
                   </div>
                 </div>
@@ -803,7 +816,7 @@ export default function App() {
                   key={index}
                   className={`flex ${
                     msg.role === "user" ? "justify-end" : "justify-start"
-                  } animate-fadeInUp`}
+                  } animate-messageIn`}
                   style={{ animationDelay: `${index * 50}ms` }}
                 >
                   <div
@@ -868,7 +881,7 @@ export default function App() {
             })}
 
             {fileUploading && (
-              <div className="flex justify-start animate-fadeInUp">
+              <div className="flex justify-start animate-messageIn">
                 <div className="bg-white/10 border border-white/20 rounded-2xl px-4 sm:px-5 py-2 sm:py-3 flex items-center gap-2 sm:gap-3 backdrop-blur-sm">
                   <div className="animate-spin rounded-full h-4 w-4 sm:h-5 sm:w-5 border-2 border-indigo-500 border-t-transparent"></div>
                   <span className="text-slate-300 text-sm sm:text-base">Загрузка файла...</span>
@@ -877,14 +890,14 @@ export default function App() {
             )}
 
             {typing && (
-              <div className="flex justify-start animate-fadeInUp">
-                <div className="bg-white/10 border border-white/10 rounded-2xl px-4 sm:px-5 py-2 sm:py-3 backdrop-blur-sm">
-                  <div className="flex gap-1.5 items-center">
-                    <span className="w-2 h-2 bg-indigo-400 rounded-full animate-typing-dot"></span>
-                    <span className="w-2 h-2 bg-indigo-400 rounded-full animate-typing-dot"></span>
-                    <span className="w-2 h-2 bg-indigo-400 rounded-full animate-typing-dot"></span>
-                    <span className="ml-1 text-xs text-slate-400 font-light">печатает...</span>
+              <div className="flex justify-start animate-messageIn">
+                <div className="bg-white/10 border border-white/10 rounded-2xl px-5 py-3 backdrop-blur-sm flex items-center gap-2">
+                  <div className="flex gap-1.5">
+                    <span className="typing-dot"></span>
+                    <span className="typing-dot"></span>
+                    <span className="typing-dot"></span>
                   </div>
+                  <span className="text-sm text-slate-300 font-light">Nova печатает</span>
                 </div>
               </div>
             )}
@@ -943,9 +956,13 @@ export default function App() {
                 <button
                   disabled={sending}
                   onClick={() => sendMessage()}
-                  className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:via-purple-500 hover:to-pink-500 transition-all duration-300 transform hover:scale-105 active:scale-95 flex items-center justify-center flex-shrink-0 shadow-lg shadow-indigo-500/25 group"
+                  className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:via-purple-500 hover:to-pink-500 transition-all duration-300 transform hover:scale-110 active:scale-90 flex items-center justify-center flex-shrink-0 shadow-lg shadow-indigo-500/25 group animate-pulse-glow"
                 >
-                  {sending ? "..." : <Send size={20} className="sm:w-6 sm:h-6 group-hover:rotate-12 transition-transform" />}
+                  {sending ? (
+                    <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  ) : (
+                    <Send size={20} className="sm:w-6 sm:h-6 group-hover:rotate-12 group-hover:scale-110 transition-all duration-300" />
+                  )}
                 </button>
               </div>
             </div>
