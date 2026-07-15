@@ -1,40 +1,76 @@
 const API = import.meta.env.VITE_API_URL || "https://nova-ai-6z2q.onrender.com";
 
+// ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ТОКЕНА =====
+function getToken() {
+  return localStorage.getItem('token');
+}
+
+function setToken(token) {
+  localStorage.setItem('token', token);
+}
+
+function removeToken() {
+  localStorage.removeItem('token');
+}
+
+function getHeaders() {
+  const token = getToken();
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 // ===== АВТОРИЗАЦИЯ =====
 export async function register(username, password) {
   const response = await fetch(`${API}/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    credentials: 'include',
     body: JSON.stringify({ username, password })
   });
   if (!response.ok) {
     const errorData = await response.json();
     throw new Error(errorData.error || "Ошибка регистрации");
   }
-  return await response.json();
+  const data = await response.json();
+  if (data.token) {
+    setToken(data.token);
+  }
+  return data;
 }
 
 export async function login(username, password) {
   const response = await fetch(`${API}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    credentials: 'include',
     body: JSON.stringify({ username, password })
   });
   if (!response.ok) {
     const errorData = await response.json();
     throw new Error(errorData.error || "Ошибка входа");
   }
-  return await response.json();
+  const data = await response.json();
+  if (data.token) {
+    setToken(data.token);
+  }
+  return data;
+}
+
+export async function logout() {
+  removeToken();
+  localStorage.removeItem('userId');
+  localStorage.removeItem('username');
+  return { success: true };
 }
 
 // ===== ЧАТЫ =====
 export async function createChat() {
   const response = await fetch(`${API}/chats`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: 'include'
+    headers: getHeaders()
   });
   if (!response.ok) {
     const err = await response.json();
@@ -45,7 +81,7 @@ export async function createChat() {
 
 export async function getChats() {
   const response = await fetch(`${API}/chats`, {
-    credentials: 'include'
+    headers: getHeaders()
   });
   if (!response.ok) {
     throw new Error("Ошибка загрузки чатов");
@@ -56,7 +92,7 @@ export async function getChats() {
 export async function deleteChat(chatId) {
   const response = await fetch(`${API}/chats/${chatId}`, {
     method: "DELETE",
-    credentials: 'include'
+    headers: getHeaders()
   });
   if (!response.ok) {
     const err = await response.json();
@@ -68,7 +104,7 @@ export async function deleteChat(chatId) {
 // ===== СООБЩЕНИЯ =====
 export async function getMessages(chatId) {
   const response = await fetch(`${API}/messages/${chatId}`, {
-    credentials: 'include'
+    headers: getHeaders()
   });
   if (!response.ok) {
     throw new Error("Ошибка загрузки сообщений");
@@ -81,8 +117,7 @@ export async function askNova(chatId, message, onChunk) {
   try {
     const response = await fetch(`${API}/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: 'include',
+      headers: getHeaders(),
       body: JSON.stringify({ chatId, message })
     });
     if (response.status === 429) {
@@ -127,7 +162,7 @@ export async function askNova(chatId, message, onChunk) {
 // ===== ПАМЯТЬ =====
 export async function getMemory() {
   const response = await fetch(`${API}/memory`, {
-    credentials: 'include'
+    headers: getHeaders()
   });
   if (!response.ok) {
     throw new Error("Ошибка загрузки памяти");
@@ -139,8 +174,7 @@ export async function getMemory() {
 export async function getTTS(text) {
   const response = await fetch(`${API}/tts`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: 'include',
+    headers: getHeaders(),
     body: JSON.stringify({ text })
   });
   if (!response.ok) {
@@ -157,7 +191,9 @@ export async function uploadFile(file, question = "Опиши, что изобр
   formData.append("question", question);
   const response = await fetch(`${API}/upload`, {
     method: "POST",
-    credentials: 'include',
+    headers: {
+      'Authorization': getHeaders()['Authorization'] || ''
+    },
     body: formData
   });
   if (!response.ok) {
@@ -171,9 +207,9 @@ export async function uploadFile(file, question = "Опиши, что изобр
 export async function checkAdmin() {
   try {
     const response = await fetch(`${API}/admin/stats`, {
-      credentials: 'include'
+      headers: getHeaders()
     });
-    return response.ok; // 200 – админ, иначе false
+    return response.ok;
   } catch {
     return false;
   }
@@ -181,7 +217,7 @@ export async function checkAdmin() {
 
 export async function getStats() {
   const response = await fetch(`${API}/admin/stats`, {
-    credentials: 'include'
+    headers: getHeaders()
   });
   if (!response.ok) {
     const err = await response.json();
@@ -192,7 +228,7 @@ export async function getStats() {
 
 export async function getUsers() {
   const response = await fetch(`${API}/admin/users`, {
-    credentials: 'include'
+    headers: getHeaders()
   });
   if (!response.ok) {
     const err = await response.json();
@@ -204,7 +240,7 @@ export async function getUsers() {
 export async function deleteUser(id) {
   const response = await fetch(`${API}/admin/users/${id}`, {
     method: "DELETE",
-    credentials: 'include'
+    headers: getHeaders()
   });
   if (!response.ok) {
     const err = await response.json();
@@ -216,7 +252,7 @@ export async function deleteUser(id) {
 // ===== ПОДПИСКИ =====
 export async function getSubscription() {
   const response = await fetch(`${API}/subscription`, {
-    credentials: 'include'
+    headers: getHeaders()
   });
   if (!response.ok) {
     const err = await response.json();
@@ -228,8 +264,7 @@ export async function getSubscription() {
 export async function upgradePlan(plan) {
   const response = await fetch(`${API}/subscription/upgrade`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: 'include',
+    headers: getHeaders(),
     body: JSON.stringify({ plan })
   });
   if (!response.ok) {
@@ -241,7 +276,7 @@ export async function upgradePlan(plan) {
 
 export async function getPlans() {
   const response = await fetch(`${API}/plans`, {
-    credentials: 'include'
+    headers: getHeaders()
   });
   if (!response.ok) {
     const err = await response.json();
@@ -249,4 +284,5 @@ export async function getPlans() {
   }
   return await response.json();
 }
+
 export { API };

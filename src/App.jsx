@@ -18,6 +18,7 @@ import {
   getMemory,
   register,
   login,
+  logout,
   uploadFile,
   checkAdmin,
   getSubscription,
@@ -104,19 +105,20 @@ export default function App() {
       await sleep(500);
       setLoading(false);
 
-      // Проверяем, есть ли сохранённый пользователь
+      // Проверяем, есть ли сохранённый пользователь и токен
       const savedUserId = localStorage.getItem("userId");
       const savedUsername = localStorage.getItem("username");
+      const token = localStorage.getItem("token");
 
-      if (savedUserId && savedUsername) {
+      if (savedUserId && savedUsername && token) {
         setUserName(savedUsername);
-        // ✅ Загружаем данные ТОЛЬКО если пользователь уже авторизован
+        // Загружаем данные только если есть токен (авторизованы)
         await loadChats();
         const adminStatus = await checkAdmin();
         setIsAdmin(adminStatus);
         await loadSubscription();
       } else {
-        // ✅ Показываем модалку авторизации (без загрузки данных)
+        // Показываем модалку авторизации
         setShowAuthModal(true);
       }
     }
@@ -267,6 +269,10 @@ export default function App() {
         : await register(authUsername, authPassword);
 
       if (result.success) {
+        // Сохраняем токен (он уже сохранён в api.js, но сохраним и здесь)
+        if (result.token) {
+          localStorage.setItem("token", result.token);
+        }
         localStorage.setItem("userId", result.userId);
         localStorage.setItem("username", result.username);
         setUserName(result.username);
@@ -290,6 +296,8 @@ export default function App() {
   const handleLogout = () => setShowLogoutModal(true);
   const confirmLogout = () => {
     setShowLogoutModal(false);
+    // Очищаем всё: токен, userId, username
+    logout(); // эта функция удаляет токен из localStorage
     localStorage.removeItem('userId');
     localStorage.removeItem('username');
     setUserName('Гость');
@@ -559,11 +567,10 @@ export default function App() {
                 <button
                   onClick={async () => {
                     try {
-                      const response = await fetch(`${API}/guest`, {
-                        credentials: 'include'
-                      });
+                      const response = await fetch(`${API}/guest`);
                       const data = await response.json();
-                      if (data.userId) {
+                      if (data.token && data.userId) {
+                        localStorage.setItem("token", data.token);
                         localStorage.setItem("userId", data.userId);
                         localStorage.setItem("username", "Гость");
                         setUserName("Гость");

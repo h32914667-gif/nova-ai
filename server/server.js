@@ -6,11 +6,14 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 const saltRounds = 10;
 const { rateLimit } = require('express-rate-limit');
-const session = require('express-session');
 
 const db = require("./database");
+
+// ===== JWT СЕКРЕТ =====
+const JWT_SECRET = process.env.JWT_SECRET || 'super-jwt-secret-2025';
 
 // ===== СОЗДАЁМ ПАПКУ UPLOADS =====
 const uploadDir = path.join(__dirname, 'uploads');
@@ -35,30 +38,7 @@ console.log("🔑 Ключ OpenRouter загружен и проверен");
 
 const app = express();
 
-// ===== ДОВЕРЯТЬ ПРОКСИ (необходимо для secure кук на Render) =====
-app.set('trust proxy', 1);
-
-// ===== НАСТРОЙКА СЕССИЙ (принудительные параметры) =====
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'super-secret-key-2025',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: true,              // всегда true (на Render HTTPS)
-    httpOnly: true,
-    sameSite: 'none',          // всегда none (кросс-домен)
-    maxAge: 1000 * 60 * 60 * 24 * 7 // 7 дней
-  }
-}));
-
-// ===== ЛОГИРОВАНИЕ СЕССИИ (для отладки) =====
-app.use((req, res, next) => {
-  console.log('🔍 Сессия:', req.session);
-  console.log('🔍 Cookie header:', req.headers.cookie);
-  next();
-});
-
-// ===== CORS (закрытый) =====
+// ===== CORS (открытый для твоего фронтенда) =====
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5173',
@@ -68,7 +48,7 @@ const allowedOrigins = [
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin) || allowedOrigins.some(o => o instanceof RegExp && o.test(origin))) {
+    if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       console.warn('⚠️ CORS blocked origin:', origin);
@@ -82,12 +62,32 @@ app.use(cors({
 
 app.use(express.json());
 
+// ===== MIDDLEWARE ДЛЯ ПРОВЕРКИ JWT =====
+function authenticate(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).json({ error: 'Не авторизован' });
+  }
+  const token = authHeader.split(' ')[1];
+  if (!token) {
+    return res.status(401).json({ error: 'Не авторизован' });
+  }
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.userId = decoded.userId;
+    next();
+  } catch (error) {
+    console.error('JWT verify error:', error.message);
+    return res.status(401).json({ error: 'Не авторизован' });
+  }
+}
+
 // ===== Rate Limiter =====
 const chatLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
   message: { error: "Слишком много запросов. Подождите минуту." },
-  keyGenerator: (req) => req.session.userId || req.ip,
+  keyGenerator: (req) => req.userId || req.ip,
   skip: (req) => req.method === 'OPTIONS'
 });
 app.use('/chat', chatLimiter);
@@ -258,17 +258,9 @@ function incrementUsage(userId) {
   }
 }
 
-// ===== MIDDLEWARE ДЛЯ ПРОВЕРКИ АВТОРИЗАЦИИ =====
-function requireAuth(req, res, next) {
-  console.log('🔐 requireAuth: userId =', req.session.userId);
-  if (!req.session.userId) {
-    return res.status(401).json({ error: 'Не авторизован' });
-  }
-  next();
-}
-
 // ===== Эндпоинты =====
 
+// Публичные
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'Nova API is running' });
 });
@@ -277,13 +269,12 @@ app.get("/plans", (req, res) => {
   res.json(PLANS);
 });
 
-// ===== ГОСТЬ (создаёт сессию) =====
+// ===== ГОСТЬ (возвращает JWT) =====
 app.get("/guest", (req, res) => {
   try {
     const userId = getGuest();
-    req.session.userId = userId;
-    console.log('✅ Гость: userId установлен в сессию:', req.session.userId);
-    res.json({ userId });
+    const token = jwt.sign({ userId }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token, userId });
   } catch (error) {
     console.error("Guest error:", error);
     res.status(500).json({ error: "Ошибка создания гостя" });
@@ -299,9 +290,8 @@ app.post("/register", async (req, res) => {
     if (existing) return res.status(400).json({ error: "Пользователь уже существует" });
     const hashedPassword = await bcrypt.hash(password, saltRounds);
     const result = db.prepare(`INSERT INTO users (username, password) VALUES (?, ?)`).run(username, hashedPassword);
-    req.session.userId = result.lastInsertRowid;
-    console.log('✅ Регистрация: userId установлен в сессию:', req.session.userId);
-    res.json({ success: true, userId: result.lastInsertRowid, username });
+    const token = jwt.sign({ userId: result.lastInsertRowid }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ success: true, token, userId: result.lastInsertRowid, username });
   } catch (error) {
     console.error("Register error:", error);
     res.status(500).json({ error: "Ошибка регистрации" });
@@ -317,30 +307,21 @@ app.post("/login", loginLimiter, async (req, res) => {
     if (!user) return res.status(400).json({ error: "Пользователь не найден" });
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) return res.status(400).json({ error: "Неверный пароль" });
-    req.session.userId = user.id;
-    console.log('✅ Логин: userId установлен в сессию:', req.session.userId);
-    res.json({ success: true, userId: user.id, username: user.username });
+    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ success: true, token, userId: user.id, username: user.username });
   } catch (error) {
     console.error("Login error:", error);
     res.status(500).json({ error: "Ошибка входа" });
   }
 });
 
-// ===== ВЫХОД =====
-app.post("/logout", (req, res) => {
-  req.session.destroy((err) => {
-    if (err) return res.status(500).json({ error: "Ошибка выхода" });
-    res.json({ success: true });
-  });
-});
-
 // ===== Защищённые эндпоинты =====
-app.use(requireAuth);
+app.use(authenticate);
 
 // ===== Чаты =====
 app.post("/chats", (req, res) => {
   try {
-    const userId = req.session.userId;
+    const userId = req.userId;
     const result = db.prepare(`INSERT INTO conversations (user_id, title) VALUES (?, ?)`).run(userId, "Новый чат");
     res.json({ id: result.lastInsertRowid, title: "Новый чат" });
   } catch (error) {
@@ -351,7 +332,7 @@ app.post("/chats", (req, res) => {
 
 app.get("/chats", (req, res) => {
   try {
-    const userId = req.session.userId;
+    const userId = req.userId;
     const chats = db.prepare(`SELECT * FROM conversations WHERE user_id = ? ORDER BY id DESC`).all(userId);
     res.json(chats);
   } catch (error) {
@@ -373,7 +354,7 @@ app.get("/messages/:chatId", (req, res) => {
 // ===== ОСНОВНОЙ ЧАТ =====
 app.post("/chat", async (req, res) => {
   try {
-    const userId = req.session.userId;
+    const userId = req.userId;
     const { chatId, message } = req.body;
     if (!chatId) return res.json({ reply: "Ошибка: чат не выбран" });
     if (!message) return res.json({ reply: "Напиши сообщение" });
@@ -611,7 +592,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 // ===== ПАМЯТЬ =====
 app.get("/memory", (req, res) => {
   try {
-    const userId = req.session.userId;
+    const userId = req.userId;
     const memory = db.prepare(`SELECT * FROM memory WHERE user_id = ?`).all(userId);
     res.json(memory);
   } catch (error) {
@@ -622,7 +603,7 @@ app.get("/memory", (req, res) => {
 
 app.delete("/memory", (req, res) => {
   try {
-    const userId = req.session.userId;
+    const userId = req.userId;
     db.prepare(`DELETE FROM memory WHERE user_id = ?`).run(userId);
     res.json({ success: true });
   } catch (error) {
@@ -709,7 +690,7 @@ app.post('/tts', async (req, res) => {
 // ===== ПОДПИСКИ =====
 app.get("/subscription", (req, res) => {
   try {
-    const userId = req.session.userId;
+    const userId = req.userId;
     let sub = db.prepare("SELECT plan, expires_at, created_at FROM subscriptions WHERE user_id = ?").get(userId);
     if (!sub) {
       db.prepare("INSERT INTO subscriptions (user_id, plan) VALUES (?, ?)").run(userId, 'free');
@@ -743,7 +724,7 @@ app.get("/subscription", (req, res) => {
 
 app.post("/subscription/upgrade", (req, res) => {
   try {
-    const userId = req.session.userId;
+    const userId = req.userId;
     const { plan } = req.body;
     if (!PLANS[plan]) {
       return res.status(400).json({ error: "Неверный тариф" });
@@ -767,7 +748,7 @@ app.post("/subscription/upgrade", (req, res) => {
 // ===== АДМИН-ПАНЕЛЬ =====
 app.get("/admin/stats", (req, res) => {
   try {
-    const userId = req.session.userId;
+    const userId = req.userId;
     if (!isAdmin(userId)) {
       return res.status(403).json({ error: "Доступ запрещён" });
     }
@@ -787,7 +768,7 @@ app.get("/admin/stats", (req, res) => {
 
 app.get("/admin/users", (req, res) => {
   try {
-    const userId = req.session.userId;
+    const userId = req.userId;
     if (!isAdmin(userId)) {
       return res.status(403).json({ error: "Доступ запрещён" });
     }
@@ -801,7 +782,7 @@ app.get("/admin/users", (req, res) => {
 
 app.delete("/admin/users/:id", (req, res) => {
   try {
-    const adminId = req.session.userId;
+    const adminId = req.userId;
     if (!isAdmin(adminId)) {
       return res.status(403).json({ error: "Доступ запрещён" });
     }
