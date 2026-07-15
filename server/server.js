@@ -38,16 +38,16 @@ const app = express();
 // ===== ДОВЕРЯТЬ ПРОКСИ (необходимо для secure кук на Render) =====
 app.set('trust proxy', 1);
 
-// ===== НАСТРОЙКА СЕССИЙ =====
+// ===== НАСТРОЙКА СЕССИЙ (принудительные параметры) =====
 app.use(session({
   secret: process.env.SESSION_SECRET || 'super-secret-key-2025',
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: process.env.NODE_ENV === 'production',
+    secure: true,              // всегда true (на Render HTTPS)
     httpOnly: true,
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    maxAge: 1000 * 60 * 60 * 24 * 7
+    sameSite: 'none',          // всегда none (кросс-домен)
+    maxAge: 1000 * 60 * 60 * 24 * 7 // 7 дней
   }
 }));
 
@@ -67,7 +67,6 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Разрешаем запросы без origin (например, от curl или мобильных приложений)
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin) || allowedOrigins.some(o => o instanceof RegExp && o.test(origin))) {
       callback(null, true);
@@ -93,7 +92,6 @@ const chatLimiter = rateLimit({
 });
 app.use('/chat', chatLimiter);
 
-// Лимит для логина (защита от брутфорса)
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
@@ -271,7 +269,6 @@ function requireAuth(req, res, next) {
 
 // ===== Эндпоинты =====
 
-// Публичные (без авторизации)
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'Nova API is running' });
 });
@@ -293,7 +290,7 @@ app.get("/guest", (req, res) => {
   }
 });
 
-// ===== РЕГИСТРАЦИЯ (создаёт сессию) =====
+// ===== РЕГИСТРАЦИЯ =====
 app.post("/register", async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -311,7 +308,7 @@ app.post("/register", async (req, res) => {
   }
 });
 
-// ===== ЛОГИН (создаёт сессию) =====
+// ===== ЛОГИН =====
 app.post("/login", loginLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -338,7 +335,7 @@ app.post("/logout", (req, res) => {
 });
 
 // ===== Защищённые эндпоинты =====
-app.use(requireAuth); // все дальнейшие эндпоинты требуют авторизации
+app.use(requireAuth);
 
 // ===== Чаты =====
 app.post("/chats", (req, res) => {
