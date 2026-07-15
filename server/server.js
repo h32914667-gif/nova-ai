@@ -8,6 +8,7 @@ const multer = require('multer');
 const bcrypt = require('bcrypt');
 const saltRounds = 10;
 const { rateLimit } = require('express-rate-limit');
+const session = require('express-session');
 
 const db = require("./database");
 
@@ -34,12 +35,39 @@ console.log("🔑 Ключ OpenRouter загружен и проверен");
 
 const app = express();
 
-// ===== CORS (открытый для всех) =====
+// ===== НАСТРОЙКА СЕССИЙ =====
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'super-secret-key-2025',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    maxAge: 1000 * 60 * 60 * 24 * 7 // 7 дней
+  }
+}));
+
+// ===== CORS (закрытый) =====
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  process.env.FRONTEND_URL || 'https://nova-ai-ten-ashen.vercel.app'
+];
+
 app.use(cors({
-  origin: '*',
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin) || allowedOrigins.some(o => o instanceof RegExp && o.test(origin))) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
 app.use(express.json());
 
 // ===== Rate Limiter =====
@@ -47,10 +75,17 @@ const chatLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
   message: { error: "Слишком много запросов. Подождите минуту." },
-  keyGenerator: (req) => req.body.userId || req.ip,
+  keyGenerator: (req) => req.session.userId || req.ip,
   skip: (req) => req.method === 'OPTIONS'
 });
 app.use('/chat', chatLimiter);
+
+// Лимит для логина (защита от брутфорса)
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { error: 'Слишком много попыток входа. Попробуйте через 15 минут.' }
+});
 
 // ===== Multer =====
 const storage = multer.diskStorage({
@@ -212,27 +247,30 @@ function incrementUsage(userId) {
   }
 }
 
-// ===== ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ USER_ID =====
-function getUserId(req) {
-  // Сначала пытаемся взять из сессии (если есть)
-  if (req.session && req.session.userId) {
-    return req.session.userId;
+// ===== MIDDLEWARE ДЛЯ ПРОВЕРКИ АВТОРИЗАЦИИ =====
+function requireAuth(req, res, next) {
+  if (!req.session.userId) {
+    return res.status(401).json({ error: 'Не авторизован' });
   }
-  // Иначе из body или query
-  const bodyUserId = req.body && req.body.userId;
-  const queryUserId = req.query && req.query.userId;
-  return bodyUserId || queryUserId || null;
+  next();
 }
 
 // ===== Эндпоинты =====
+
+// Публичные (без авторизации)
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'Nova API is running' });
 });
 
-// ===== ГОСТЬ =====
+app.get("/plans", (req, res) => {
+  res.json(PLANS);
+});
+
+// ===== ГОСТЬ (создаёт сессию) =====
 app.get("/guest", (req, res) => {
   try {
     const userId = getGuest();
+    req.session.userId = userId;
     res.json({ userId });
   } catch (error) {
     console.error("Guest error:", error);
@@ -240,10 +278,55 @@ app.get("/guest", (req, res) => {
   }
 });
 
+// ===== РЕГИСТРАЦИЯ (создаёт сессию) =====
+app.post("/register", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: "Заполните все поля" });
+    const existing = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
+    if (existing) return res.status(400).json({ error: "Пользователь уже существует" });
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    const result = db.prepare(`INSERT INTO users (username, password) VALUES (?, ?)`).run(username, hashedPassword);
+    req.session.userId = result.lastInsertRowid;
+    res.json({ success: true, userId: result.lastInsertRowid, username });
+  } catch (error) {
+    console.error("Register error:", error);
+    res.status(500).json({ error: "Ошибка регистрации" });
+  }
+});
+
+// ===== ЛОГИН (создаёт сессию) =====
+app.post("/login", loginLimiter, async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: "Заполните все поля" });
+    const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
+    if (!user) return res.status(400).json({ error: "Пользователь не найден" });
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).json({ error: "Неверный пароль" });
+    req.session.userId = user.id;
+    res.json({ success: true, userId: user.id, username: user.username });
+  } catch (error) {
+    console.error("Login error:", error);
+    res.status(500).json({ error: "Ошибка входа" });
+  }
+});
+
+// ===== ВЫХОД =====
+app.post("/logout", (req, res) => {
+  req.session.destroy((err) => {
+    if (err) return res.status(500).json({ error: "Ошибка выхода" });
+    res.json({ success: true });
+  });
+});
+
+// ===== Защищённые эндпоинты =====
+app.use(requireAuth); // все дальнейшие эндпоинты требуют авторизации
+
 // ===== Чаты =====
 app.post("/chats", (req, res) => {
   try {
-    let userId = getUserId(req) || getGuest();
+    const userId = req.session.userId;
     const result = db.prepare(`INSERT INTO conversations (user_id, title) VALUES (?, ?)`).run(userId, "Новый чат");
     res.json({ id: result.lastInsertRowid, title: "Новый чат" });
   } catch (error) {
@@ -252,9 +335,9 @@ app.post("/chats", (req, res) => {
   }
 });
 
-app.get("/chats/:userId", (req, res) => {
+app.get("/chats", (req, res) => {
   try {
-    const userId = req.params.userId;
+    const userId = req.session.userId;
     const chats = db.prepare(`SELECT * FROM conversations WHERE user_id = ? ORDER BY id DESC`).all(userId);
     res.json(chats);
   } catch (error) {
@@ -276,7 +359,7 @@ app.get("/messages/:chatId", (req, res) => {
 // ===== ОСНОВНОЙ ЧАТ =====
 app.post("/chat", async (req, res) => {
   try {
-    let userId = getUserId(req) || getGuest();
+    const userId = req.session.userId;
     const { chatId, message } = req.body;
     if (!chatId) return res.json({ reply: "Ошибка: чат не выбран" });
     if (!message) return res.json({ reply: "Напиши сообщение" });
@@ -511,42 +594,11 @@ app.post('/upload', upload.single('file'), async (req, res) => {
   }
 });
 
-// ===== РЕГИСТРАЦИЯ =====
-app.post("/register", async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ error: "Заполните все поля" });
-    const existing = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
-    if (existing) return res.status(400).json({ error: "Пользователь уже существует" });
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
-    const result = db.prepare(`INSERT INTO users (username, password) VALUES (?, ?)`).run(username, hashedPassword);
-    res.json({ success: true, userId: result.lastInsertRowid, username });
-  } catch (error) {
-    console.error("Register error:", error);
-    res.status(500).json({ error: "Ошибка регистрации" });
-  }
-});
-
-// ===== ЛОГИН =====
-app.post("/login", async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ error: "Заполните все поля" });
-    const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
-    if (!user) return res.status(400).json({ error: "Пользователь не найден" });
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ error: "Неверный пароль" });
-    res.json({ success: true, userId: user.id, username: user.username });
-  } catch (error) {
-    console.error("Login error:", error);
-    res.status(500).json({ error: "Ошибка входа" });
-  }
-});
-
 // ===== ПАМЯТЬ =====
-app.get("/memory/:userId", (req, res) => {
+app.get("/memory", (req, res) => {
   try {
-    const memory = db.prepare(`SELECT * FROM memory WHERE user_id = ?`).all(req.params.userId);
+    const userId = req.session.userId;
+    const memory = db.prepare(`SELECT * FROM memory WHERE user_id = ?`).all(userId);
     res.json(memory);
   } catch (error) {
     console.log(error);
@@ -554,9 +606,10 @@ app.get("/memory/:userId", (req, res) => {
   }
 });
 
-app.delete("/memory/:userId", (req, res) => {
+app.delete("/memory", (req, res) => {
   try {
-    db.prepare(`DELETE FROM memory WHERE user_id = ?`).run(req.params.userId);
+    const userId = req.session.userId;
+    db.prepare(`DELETE FROM memory WHERE user_id = ?`).run(userId);
     res.json({ success: true });
   } catch (error) {
     console.log("DELETE MEMORY ERROR:", error);
@@ -640,9 +693,9 @@ app.post('/tts', async (req, res) => {
 });
 
 // ===== ПОДПИСКИ =====
-app.get("/subscription/:userId", (req, res) => {
+app.get("/subscription", (req, res) => {
   try {
-    const userId = req.params.userId;
+    const userId = req.session.userId;
     let sub = db.prepare("SELECT plan, expires_at, created_at FROM subscriptions WHERE user_id = ?").get(userId);
     if (!sub) {
       db.prepare("INSERT INTO subscriptions (user_id, plan) VALUES (?, ?)").run(userId, 'free');
@@ -674,15 +727,12 @@ app.get("/subscription/:userId", (req, res) => {
   }
 });
 
-app.get("/plans", (req, res) => {
-  res.json(PLANS);
-});
-
 app.post("/subscription/upgrade", (req, res) => {
   try {
-    const { userId, plan } = req.body;
-    if (!userId || !PLANS[plan]) {
-      return res.status(400).json({ error: "Неверный запрос" });
+    const userId = req.session.userId;
+    const { plan } = req.body;
+    if (!PLANS[plan]) {
+      return res.status(400).json({ error: "Неверный тариф" });
     }
     if (!isAdmin(userId)) {
       return res.status(403).json({ error: "Доступ запрещён. Только администратор может менять тариф." });
@@ -703,8 +753,8 @@ app.post("/subscription/upgrade", (req, res) => {
 // ===== АДМИН-ПАНЕЛЬ =====
 app.get("/admin/stats", (req, res) => {
   try {
-    const userId = req.query.userId;
-    if (!userId || !isAdmin(userId)) {
+    const userId = req.session.userId;
+    if (!isAdmin(userId)) {
       return res.status(403).json({ error: "Доступ запрещён" });
     }
     const totalUsers = db.prepare("SELECT COUNT(*) as count FROM users").get();
@@ -723,8 +773,8 @@ app.get("/admin/stats", (req, res) => {
 
 app.get("/admin/users", (req, res) => {
   try {
-    const userId = req.query.userId;
-    if (!userId || !isAdmin(userId)) {
+    const userId = req.session.userId;
+    if (!isAdmin(userId)) {
       return res.status(403).json({ error: "Доступ запрещён" });
     }
     const users = db.prepare("SELECT id, username FROM users ORDER BY id").all();
@@ -737,8 +787,8 @@ app.get("/admin/users", (req, res) => {
 
 app.delete("/admin/users/:id", (req, res) => {
   try {
-    const adminId = req.query.adminId;
-    if (!adminId || !isAdmin(adminId)) {
+    const adminId = req.session.userId;
+    if (!isAdmin(adminId)) {
       return res.status(403).json({ error: "Доступ запрещён" });
     }
     const userId = req.params.id;
