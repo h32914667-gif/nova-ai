@@ -23,7 +23,7 @@ import {
   getSubscription,
   upgradePlan,
   getPlans,
-  API  // 👈 импортируем API
+  API
 } from "./api";
 
 import AdminPanel from "./components/AdminPanel";
@@ -103,16 +103,20 @@ export default function App() {
       setLoadingFade(true);
       await sleep(500);
       setLoading(false);
-      await loadChats();
 
+      // Проверяем, есть ли сохранённый пользователь
       const savedUserId = localStorage.getItem("userId");
       const savedUsername = localStorage.getItem("username");
+
       if (savedUserId && savedUsername) {
         setUserName(savedUsername);
+        // ✅ Загружаем данные ТОЛЬКО если пользователь уже авторизован
+        await loadChats();
         const adminStatus = await checkAdmin();
         setIsAdmin(adminStatus);
         await loadSubscription();
       } else {
+        // ✅ Показываем модалку авторизации (без загрузки данных)
         setShowAuthModal(true);
       }
     }
@@ -230,7 +234,6 @@ export default function App() {
   // ===== OPEN PROFILE =====
   async function openProfile() {
     try {
-      // ✅ больше не передаём userId
       const data = await getMemory();
       setProfile(Array.isArray(data) ? data : []);
       setShowProfile(true);
@@ -242,7 +245,6 @@ export default function App() {
   // ===== ЗАГРУЗКА ПОДПИСКИ =====
   async function loadSubscription() {
     try {
-      // ✅ больше не передаём userId
       const data = await getSubscription();
       setSubscriptionPlan(data.plan);
       setRemainingMessages(data.remaining);
@@ -557,7 +559,6 @@ export default function App() {
                 <button
                   onClick={async () => {
                     try {
-                      // ✅ используем API из импорта
                       const response = await fetch(`${API}/guest`, {
                         credentials: 'include'
                       });
