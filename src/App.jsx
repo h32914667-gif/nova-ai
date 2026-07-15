@@ -22,7 +22,8 @@ import {
   checkAdmin,
   getSubscription,
   upgradePlan,
-  getPlans
+  getPlans,
+  API  // 👈 импортируем API
 } from "./api";
 
 import AdminPanel from "./components/AdminPanel";
@@ -229,9 +230,8 @@ export default function App() {
   // ===== OPEN PROFILE =====
   async function openProfile() {
     try {
-      const userId = localStorage.getItem("userId");
-      if (!userId) return;
-      const data = await getMemory(userId);
+      // ✅ больше не передаём userId
+      const data = await getMemory();
       setProfile(Array.isArray(data) ? data : []);
       setShowProfile(true);
     } catch (error) {
@@ -242,9 +242,8 @@ export default function App() {
   // ===== ЗАГРУЗКА ПОДПИСКИ =====
   async function loadSubscription() {
     try {
-      const userId = localStorage.getItem("userId");
-      if (!userId) return;
-      const data = await getSubscription(userId);
+      // ✅ больше не передаём userId
+      const data = await getSubscription();
       setSubscriptionPlan(data.plan);
       setRemainingMessages(data.remaining);
       setUserPlan(data.name);
@@ -558,7 +557,10 @@ export default function App() {
                 <button
                   onClick={async () => {
                     try {
-                      const response = await fetch(`${import.meta.env.VITE_API_URL || "https://nova-ai-6z2q.onrender.com"}/guest`);
+                      // ✅ используем API из импорта
+                      const response = await fetch(`${API}/guest`, {
+                        credentials: 'include'
+                      });
                       const data = await response.json();
                       if (data.userId) {
                         localStorage.setItem("userId", data.userId);
@@ -1041,11 +1043,8 @@ export default function App() {
 
       {/* ===== SUBSCRIPTION PANEL ===== */}
       {showSubscription && (
-  <Subscription
-    userId={localStorage.getItem("userId")}
-    onClose={() => setShowSubscription(false)}
-  />
-)}
+        <Subscription onClose={() => setShowSubscription(false)} />
+      )}
 
       {/* ===== SCROLL BUTTON ===== */}
       {showScrollButton && (

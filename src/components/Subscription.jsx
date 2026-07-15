@@ -1,27 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { getSubscription, getPlans, upgradePlan } from '../api';
 
-export default function Subscription({ userId, onClose }) {
+export default function Subscription({ onClose }) {
   const [currentPlan, setCurrentPlan] = useState(null);
   const [plans, setPlans] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    // Если userId не передан — сразу показываем ошибку
-    if (!userId) {
-      setError('Пользователь не авторизован');
-      setLoading(false);
-      return;
-    }
     loadData();
-  }, [userId]);
+  }, []);
 
   async function loadData() {
     try {
       const [plansData, subData] = await Promise.all([
         getPlans(),
-        getSubscription(userId)
+        getSubscription() // ✅ без userId
       ]);
       setPlans(plansData);
       setCurrentPlan(subData);
@@ -40,7 +34,7 @@ export default function Subscription({ userId, onClose }) {
     }
     if (!confirm(`Перейти на тариф ${plans[planKey]?.name || planKey} за ${plans[planKey]?.price || 0} ₽/мес?`)) return;
     try {
-      const result = await upgradePlan(userId, planKey);
+      const result = await upgradePlan(planKey); // ✅ без userId
       setCurrentPlan({ ...currentPlan, plan: result.plan, expires_at: result.expires_at });
       alert('Тариф обновлён!');
     } catch (err) {
