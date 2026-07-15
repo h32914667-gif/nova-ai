@@ -1041,8 +1041,11 @@ export default function App() {
 
       {/* ===== SUBSCRIPTION PANEL ===== */}
       {showSubscription && (
-        <Subscription onClose={() => setShowSubscription(false)} />
-      )}
+  <Subscription
+    userId={localStorage.getItem("userId")}
+    onClose={() => setShowSubscription(false)}
+  />
+)}
 
       {/* ===== SCROLL BUTTON ===== */}
       {showScrollButton && (
