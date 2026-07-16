@@ -739,6 +739,7 @@ app.post("/generate-image", authenticate, async (req, res) => {
       });
     }
 
+    // Используем стабильную модель stable-diffusion-xl
     const response = await fetch("https://openrouter.ai/api/v1/images/generations", {
       method: "POST",
       headers: {
@@ -746,31 +747,33 @@ app.post("/generate-image", authenticate, async (req, res) => {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "dall-e-3",
+        model: "stable-diffusion-xl", // или "sdxl"
         prompt: prompt,
         n: 1,
         size: "1024x1024"
       })
     });
 
+    // Логируем полный ответ для диагностики
     if (!response.ok) {
-      const errorData = await response.json();
-      console.error("OpenRouter Image error:", errorData);
-      return res.status(500).json({ error: "Ошибка генерации изображения" });
+      const errorText = await response.text();
+      console.error("❌ OpenRouter Image error:", response.status, errorText);
+      return res.status(500).json({ error: `Ошибка генерации: ${response.status}` });
     }
 
     const data = await response.json();
-    const imageUrl = data.data?.[0]?.url;
+    console.log("✅ OpenRouter Image response:", JSON.stringify(data, null, 2)); // красивый лог
 
+    const imageUrl = data.data?.[0]?.url;
     if (!imageUrl) {
+      console.error("❌ Нет URL в ответе:", data);
       return res.status(500).json({ error: "Не удалось получить URL изображения" });
     }
 
     incrementUsage(userId);
-
     res.json({ imageUrl });
   } catch (error) {
-    console.error("Generate image error:", error);
+    console.error("❌ Generate image error:", error);
     res.status(500).json({ error: "Ошибка генерации" });
   }
 });
