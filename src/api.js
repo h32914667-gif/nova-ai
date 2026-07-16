@@ -1,4 +1,4 @@
-const API = import.meta.env.VITE_API_URL || "https://nova-ai-6z2q.onrender.com";
+const API = import.meta.env.VITE_API_URL || "https://nova-ai-1-b7zt.onrender.com";
 
 // ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ТОКЕНА =====
 function getToken() {
