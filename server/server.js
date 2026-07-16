@@ -739,7 +739,7 @@ app.post("/generate-image", authenticate, async (req, res) => {
       });
     }
 
-    // Используем стабильную модель stable-diffusion-xl
+    // Используем openai/dall-e-3 (работает через OpenRouter)
     const response = await fetch("https://openrouter.ai/api/v1/images/generations", {
       method: "POST",
       headers: {
@@ -747,14 +747,13 @@ app.post("/generate-image", authenticate, async (req, res) => {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "stable-diffusion-xl", // или "sdxl"
+        model: "openai/dall-e-3",   // 👈 правильное имя
         prompt: prompt,
         n: 1,
         size: "1024x1024"
       })
     });
 
-    // Логируем полный ответ для диагностики
     if (!response.ok) {
       const errorText = await response.text();
       console.error("❌ OpenRouter Image error:", response.status, errorText);
@@ -762,7 +761,7 @@ app.post("/generate-image", authenticate, async (req, res) => {
     }
 
     const data = await response.json();
-    console.log("✅ OpenRouter Image response:", JSON.stringify(data, null, 2)); // красивый лог
+    console.log("✅ OpenRouter Image response:", JSON.stringify(data, null, 2));
 
     const imageUrl = data.data?.[0]?.url;
     if (!imageUrl) {
