@@ -2,19 +2,34 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
 const saltRounds = 10;
 const { rateLimit } = require('express-rate-limit');
 
 const db = require("./database");
 
-// ===== JWT СЕКРЕТ =====
-const JWT_SECRET = process.env.JWT_SECRET || 'super-jwt-secret-2025';
+// ===== ОБЯЗАТЕЛЬНЫЕ СЕКРЕТЫ (без дефолтов!) =====
+// Если переменные не заданы — сервер не должен стартовать.
+// Дефолтные значения в проде = мгновенный взлом JWT / админки.
+const REQUIRED_ENV = ['JWT_SECRET', 'ADMIN_USERNAME', 'ADMIN_PASSWORD', 'OPENROUTER_KEY'];
+const missingEnv = REQUIRED_ENV.filter(key => !process.env[key]);
+if (missingEnv.length > 0) {
+  console.error(`❌ ОШИБКА: не заданы переменные окружения: ${missingEnv.join(', ')}`);
+  process.exit(1);
+}
+
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (process.env.JWT_SECRET.length < 32) {
+  console.error("❌ JWT_SECRET слишком короткий (минимум 32 символа). Сгенерируй, например: node -e \"console.log(require('crypto').randomBytes(48).toString('hex'))\"");
+  process.exit(1);
+}
 
 // ===== СОЗДАЁМ ПАПКУ UPLOADS =====
 const uploadDir = path.join(__dirname, 'uploads');
@@ -23,11 +38,7 @@ if (!fs.existsSync(uploadDir)) {
   console.log('📁 Папка uploads создана');
 }
 
-// ===== Проверка ключей =====
-if (!process.env.OPENROUTER_KEY) {
-  console.error("❌ ОШИБКА: OPENROUTER_KEY не задан!");
-  process.exit(1);
-}
+// ===== Проверка ключа OpenRouter =====
 const rawKey = process.env.OPENROUTER_KEY;
 const cleanedKey = rawKey.trim();
 if (!/^[a-zA-Z0-9\-_]+$/.test(cleanedKey)) {
@@ -38,6 +49,14 @@ process.env.OPENROUTER_KEY = cleanedKey;
 console.log("🔑 Ключ OpenRouter загружен и проверен");
 
 const app = express();
+
+// Если сервер стоит за прокси (Render/Vercel/Nginx) — нужно доверять
+// заголовку X-Forwarded-For, иначе rate-limit по IP будет считать всех
+// пользователей одним и тем же клиентом (или наоборот, легко обходится).
+app.set('trust proxy', 1);
+
+// ===== HELMET (базовые security-заголовки) =====
+app.use(helmet());
 
 // ===== CORS =====
 const allowedOrigins = [
@@ -54,7 +73,7 @@ app.use(cors({
       callback(null, true);
     } else {
       console.warn('⚠️ CORS blocked origin:', origin);
-      callback(new Error('Not allowed by CORS'));
+      callback(null, false); // не кидаем Error, чтобы не падать 500-кой на весь процесс
     }
   },
   credentials: true,
@@ -62,7 +81,8 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-app.use(express.json());
+// Ограничиваем размер тела запроса — защита от DoS большими payload'ами
+app.use(express.json({ limit: '200kb' }));
 
 // ===== MIDDLEWARE JWT =====
 function authenticate(req, res, next) {
@@ -103,12 +123,30 @@ const loginLimiter = rateLimit({
   message: { error: 'Слишком много попыток входа. Попробуйте через 15 минут.' }
 });
 
+// Регистрацию тоже нужно лимитировать — иначе можно спамить создание аккаунтов
+const registerLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: 'Слишком много регистраций с этого адреса. Попробуйте позже.' }
+});
+
+// Гостевой доступ — тоже лимитируем, иначе можно наштамповать тысячи гостевых
+// аккаунтов и обойти общий rate-limit
+const guestLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { error: 'Слишком много запросов гостевого доступа.' }
+});
+
 // ===== Multer =====
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + '-' + file.originalname);
+    // Оставляем только безопасное расширение от оригинального имени,
+    // само имя не используем, чтобы не тащить в путь мусор/traversal
+    const ext = path.extname(file.originalname).toLowerCase().replace(/[^a-z0-9.]/g, '');
+    cb(null, uniqueSuffix + ext);
   }
 });
 const fileFilter = (req, file, cb) => {
@@ -138,6 +176,10 @@ try {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
+  // Индексы под частые запросы — иначе на росте данных начнёт тормозить
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_user_id ON memory(user_id)`);
   console.log("✅ Таблицы subscriptions и usage проверены/созданы");
 } catch (e) {
   console.error("⚠️ Ошибка создания таблиц (игнорируем):", e.message);
@@ -192,8 +234,13 @@ const PLANS = {
 };
 
 // ===== АДМИН =====
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
+if (ADMIN_PASSWORD.length < 10) {
+  console.error("❌ ADMIN_PASSWORD слишком короткий (минимум 10 символов)");
+  process.exit(1);
+}
 
 function ensureAdmin() {
   try {
@@ -201,11 +248,11 @@ function ensureAdmin() {
     if (!admin) {
       const hashedPassword = bcrypt.hashSync(ADMIN_PASSWORD, saltRounds);
       db.prepare(`INSERT INTO users (username, password) VALUES (?, ?)`).run(ADMIN_USERNAME, hashedPassword);
-      console.log(`👑 Администратор создан: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD}`);
+      console.log(`👑 Администратор создан: ${ADMIN_USERNAME}`);
     } else {
-      const hashedPassword = bcrypt.hashSync(ADMIN_PASSWORD, saltRounds);
-      db.prepare(`UPDATE users SET password = ? WHERE username = ?`).run(hashedPassword, ADMIN_USERNAME);
-      console.log(`👑 Администратор обновлён: ${ADMIN_USERNAME}`);
+      // Пароль администратора больше не перезаписывается на каждый рестарт —
+      // раньше это позволяло сбросить пароль, просто поменяв .env и передеплоив.
+      // Обновление пароля админа теперь делается отдельной ручной операцией/скриптом.
     }
   } catch (e) {
     console.error("⚠️ Ошибка при создании админа:", e.message);
@@ -221,14 +268,19 @@ function isAdmin(userId) {
 }
 
 // ===== Функции =====
-function getGuest() {
-  let user = db.prepare("SELECT * FROM users WHERE username = ?").get("guest");
-  if (!user) {
-    const hashedPassword = bcrypt.hashSync("guest", saltRounds);
-    const result = db.prepare(`INSERT INTO users (username, password) VALUES (?, ?)`).run("guest", hashedPassword);
-    return result.lastInsertRowid;
-  }
-  return user.id;
+function generateGuestUsername() {
+  return `guest_${crypto.randomBytes(8).toString('hex')}`;
+}
+
+// Раньше все гости получали ОДИН и тот же userId ("guest") — то есть все
+// анонимные посетители делили общую память и общую историю чатов.
+// Теперь у каждого гостя создаётся свой уникальный пользователь.
+function createGuest() {
+  const username = generateGuestUsername();
+  const randomPassword = crypto.randomBytes(24).toString('hex');
+  const hashedPassword = bcrypt.hashSync(randomPassword, saltRounds);
+  const result = db.prepare(`INSERT INTO users (username, password) VALUES (?, ?)`).run(username, hashedPassword);
+  return result.lastInsertRowid;
 }
 
 function getMemory(userId) {
@@ -237,7 +289,6 @@ function getMemory(userId) {
 
 function saveMemory(userId, key, value, force = false) {
   if (!value || value.trim() === "") return;
-  console.log(`💾 saveMemory: ${key}=${value}`);
   const exists = db.prepare(`SELECT id FROM memory WHERE user_id = ? AND key = ?`).get(userId, key);
   if (exists) {
     if (force) db.prepare(`UPDATE memory SET value = ? WHERE id = ?`).run(value.trim(), exists.id);
@@ -255,6 +306,8 @@ function cleanText(text) {
   return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
 }
 
+const MAX_MESSAGE_LENGTH = 4000;
+
 function checkLimit(userId) {
   try {
     const today = new Date().toISOString().slice(0,10);
@@ -269,7 +322,8 @@ function checkLimit(userId) {
     return { allowed: used < limit, remaining, limit };
   } catch (e) {
     console.warn("⚠️ checkLimit error (ignored):", e.message);
-    return { allowed: true, remaining: Infinity, limit: Infinity };
+    // ВАЖНО: при сбое лучше НЕ давать безлимитный доступ.
+    return { allowed: false, remaining: 0, limit: FREE_LIMIT };
   }
 }
 
@@ -296,9 +350,9 @@ app.get("/plans", (req, res) => {
 });
 
 // ===== ГОСТЬ =====
-app.get("/guest", (req, res) => {
+app.get("/guest", guestLimiter, (req, res) => {
   try {
-    const userId = getGuest();
+    const userId = createGuest();
     const token = jwt.sign({ userId }, JWT_SECRET, { expiresIn: '7d' });
     res.json({ token, userId });
   } catch (error) {
@@ -308,10 +362,21 @@ app.get("/guest", (req, res) => {
 });
 
 // ===== РЕГИСТРАЦИЯ =====
-app.post("/register", async (req, res) => {
+const USERNAME_REGEX = /^[a-zA-Z0-9_.-]{3,32}$/;
+
+app.post("/register", registerLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: "Заполните все поля" });
+    if (typeof username !== 'string' || typeof password !== 'string') {
+      return res.status(400).json({ error: "Некорректные данные" });
+    }
+    if (!USERNAME_REGEX.test(username)) {
+      return res.status(400).json({ error: "Логин: 3-32 символа, только буквы/цифры/._-" });
+    }
+    if (password.length < 8 || password.length > 200) {
+      return res.status(400).json({ error: "Пароль должен быть от 8 символов" });
+    }
     const existing = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
     if (existing) return res.status(400).json({ error: "Пользователь уже существует" });
     const hashedPassword = await bcrypt.hash(password, saltRounds);
@@ -328,11 +393,16 @@ app.post("/register", async (req, res) => {
 app.post("/login", loginLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ error: "Заполните все поля" });
+    if (!username || !password || typeof username !== 'string' || typeof password !== 'string') {
+      return res.status(400).json({ error: "Заполните все поля" });
+    }
     const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
-    if (!user) return res.status(400).json({ error: "Пользователь не найден" });
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ error: "Неверный пароль" });
+    // Всегда делаем bcrypt.compare (даже если юзера нет) с фиктивным хэшем,
+    // чтобы время ответа не отличалось и нельзя было через тайминг узнать,
+    // существует ли логин в базе.
+    const dummyHash = '$2b$10$C6UzMDM.H6dfI/f/IKcEeOfBQ/9dK9Hw.1sO0v4uH0z9dV5J3aQe2';
+    const isMatch = await bcrypt.compare(password, user ? user.password : dummyHash);
+    if (!user || !isMatch) return res.status(400).json({ error: "Неверный логин или пароль" });
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
     res.json({ success: true, token, userId: user.id, username: user.username });
   } catch (error) {
@@ -341,32 +411,36 @@ app.post("/login", loginLimiter, async (req, res) => {
   }
 });
 
-// ===== АВТОРИЗАЦИЯ ЧЕРЕЗ TELEGRAM (с логированием) =====
-app.post("/telegram-login", async (req, res) => {
-  console.log('📩 Получен запрос /telegram-login');
-  console.log('📦 Тело запроса:', JSON.stringify(req.body, null, 2));
-
+// ===== АВТОРИЗАЦИЯ ЧЕРЕЗ TELEGRAM =====
+app.post("/telegram-login", loginLimiter, async (req, res) => {
   try {
     const { initData, user } = req.body;
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
-    console.log('🔍 botToken присутствует?', !!botToken);
-
     if (!botToken) {
       console.error('❌ TELEGRAM_BOT_TOKEN не задан');
-      return res.status(500).json({ error: 'TELEGRAM_BOT_TOKEN не задан' });
+      return res.status(500).json({ error: 'Telegram-авторизация недоступна' });
     }
-    if (!initData || !user) {
-      console.error('❌ Отсутствуют initData или user');
+    if (!initData || !user || typeof initData !== 'string') {
       return res.status(400).json({ error: 'Отсутствуют данные от Telegram' });
     }
 
     // Проверяем подпись
     const searchParams = new URLSearchParams(initData);
     const hash = searchParams.get('hash');
+    if (!hash) return res.status(401).json({ error: 'Неверная подпись' });
     searchParams.delete('hash');
-    searchParams.sort();
 
+    const authDateRaw = searchParams.get('auth_date');
+    const authDate = parseInt(authDateRaw, 10);
+    // Данные Telegram WebApp считаются валидными ограниченное время —
+    // без этой проверки перехваченный initData можно переиспользовать бесконечно.
+    const MAX_AUTH_AGE_SECONDS = 24 * 60 * 60;
+    if (!authDate || (Date.now() / 1000 - authDate) > MAX_AUTH_AGE_SECONDS) {
+      return res.status(401).json({ error: 'Данные авторизации устарели, откройте приложение заново' });
+    }
+
+    searchParams.sort();
     const dataCheckString = [...searchParams.entries()]
       .map(([key, value]) => `${key}=${value}`)
       .join('\n');
@@ -378,31 +452,31 @@ app.post("/telegram-login", async (req, res) => {
       .update(dataCheckString)
       .digest('hex');
 
-    console.log('🔍 computedHash:', computedHash);
-    console.log('🔍 hash from Telegram:', hash);
-
-    if (computedHash !== hash) {
-      console.error('❌ Telegram hash mismatch');
+    // Сравнение в постоянное время — защита от timing-атак
+    const hashBuffer = Buffer.from(hash, 'hex');
+    const computedBuffer = Buffer.from(computedHash, 'hex');
+    if (hashBuffer.length !== computedBuffer.length || !crypto.timingSafeEqual(hashBuffer, computedBuffer)) {
       return res.status(401).json({ error: 'Неверная подпись' });
     }
 
+    if (!user.id) return res.status(400).json({ error: 'Отсутствуют данные пользователя' });
     const telegramId = user.id.toString();
-    console.log('🔍 telegramId:', telegramId);
 
     let dbUser = db.prepare("SELECT * FROM users WHERE telegram_id = ?").get(telegramId);
 
     if (!dbUser) {
-      const username = user.username || user.first_name || `tg_${telegramId}`;
+      const rawUsername = (user.username || user.first_name || `tg_${telegramId}`).toString();
+      // Санитизируем имя из Telegram перед записью в БД
+      const safeUsername = rawUsername.replace(/[^a-zA-Z0-9_.\u0400-\u04FF -]/g, '').slice(0, 32) || `tg_${telegramId}`;
       const result = db.prepare(`
         INSERT INTO users (username, telegram_id) VALUES (?, ?)
-      `).run(username, telegramId);
-      dbUser = { id: result.lastInsertRowid, username };
+      `).run(safeUsername, telegramId);
+      dbUser = { id: result.lastInsertRowid, username: safeUsername };
       db.prepare("INSERT INTO subscriptions (user_id, plan) VALUES (?, ?)").run(dbUser.id, 'free');
-      console.log(`✅ Создан новый пользователь из Telegram: ${username}`);
+      console.log(`✅ Создан новый пользователь из Telegram: ${safeUsername}`);
     }
 
     const token = jwt.sign({ userId: dbUser.id }, JWT_SECRET, { expiresIn: '7d' });
-    console.log('✅ Успешный вход, токен сгенерирован');
     res.json({ token, userId: dbUser.id, username: dbUser.username });
   } catch (error) {
     console.error('❌ Telegram login error:', error);
@@ -474,7 +548,14 @@ app.get("/chats", (req, res) => {
 
 app.get("/messages/:chatId", (req, res) => {
   try {
-    const messages = db.prepare(`SELECT * FROM messages WHERE chat_id = ? ORDER BY id ASC`).all(req.params.chatId);
+    const userId = req.userId;
+    const chatId = req.params.chatId;
+    // Раньше не проверялось, что чат принадлежит текущему пользователю —
+    // можно было читать переписку чужого чата, просто подобрав ID.
+    const chat = db.prepare("SELECT id FROM conversations WHERE id = ? AND user_id = ?").get(chatId, userId);
+    if (!chat) return res.status(404).json({ error: "Чат не найден" });
+
+    const messages = db.prepare(`SELECT * FROM messages WHERE chat_id = ? ORDER BY id ASC`).all(chatId);
     res.json(messages);
   } catch (error) {
     console.log(error);
@@ -483,7 +564,7 @@ app.get("/messages/:chatId", (req, res) => {
 });
 
 // ===== ПЕРЕКЛЮЧИТЬ ЗАКРЕПЛЕНИЕ ЧАТА =====
-app.patch("/chats/:id/pin", authenticate, (req, res) => {
+app.patch("/chats/:id/pin", (req, res) => {
   try {
     const userId = req.userId;
     const chatId = req.params.id;
@@ -494,7 +575,7 @@ app.patch("/chats/:id/pin", authenticate, (req, res) => {
     }
 
     const newPinned = chat.pinned === 1 ? 0 : 1;
-    db.prepare("UPDATE conversations SET pinned = ? WHERE id = ?").run(newPinned, chatId);
+    db.prepare("UPDATE conversations SET pinned = ? WHERE id = ? AND user_id = ?").run(newPinned, chatId, userId);
 
     res.json({ success: true, pinned: newPinned });
   } catch (error) {
@@ -509,7 +590,15 @@ app.post("/chat", async (req, res) => {
     const userId = req.userId;
     const { chatId, message } = req.body;
     if (!chatId) return res.json({ reply: "Ошибка: чат не выбран" });
-    if (!message) return res.json({ reply: "Напиши сообщение" });
+    if (!message || typeof message !== 'string') return res.json({ reply: "Напиши сообщение" });
+    if (message.length > MAX_MESSAGE_LENGTH) {
+      return res.status(400).json({ reply: `Сообщение слишком длинное (максимум ${MAX_MESSAGE_LENGTH} символов)` });
+    }
+
+    // Проверяем, что чат принадлежит пользователю — иначе можно писать
+    // сообщения в чужой чат, зная только его ID
+    const chatOwned = db.prepare("SELECT id FROM conversations WHERE id = ? AND user_id = ?").get(chatId, userId);
+    if (!chatOwned) return res.status(404).json({ reply: "Чат не найден" });
 
     const limitCheck = checkLimit(userId);
     if (!limitCheck.allowed) {
@@ -534,7 +623,7 @@ app.post("/chat", async (req, res) => {
     }
 
     if (lower.startsWith("запомни")) {
-      const text = cleanMessage.replace(/запомни/i, "").trim();
+      const text = cleanMessage.replace(/запомни/i, "").trim().slice(0, 500);
       saveMemory(userId, "fact", text, true);
       incrementUsage(userId);
       return res.json({ reply: "🧠 Запомнила: " + text });
@@ -548,6 +637,7 @@ app.post("/chat", async (req, res) => {
       let name = cleanMessage.replace(/меня зовут/i, "").trim();
       if (!name || name === cleanMessage) name = cleanMessage.replace(/^я\s+/i, "").trim();
       if (name) {
+        name = name.slice(0, 50);
         const capitalized = name.charAt(0).toUpperCase() + name.slice(1);
         saveMemory(userId, "name", capitalized, true);
         incrementUsage(userId);
@@ -562,8 +652,6 @@ app.post("/chat", async (req, res) => {
 
     const nameMemory = userMemory.find(m => m.key === 'name');
     const creatorName = nameMemory ? nameMemory.value : 'Денис';
-
-    console.log("📋 Память:", memoryText);
 
     const history = db.prepare(`SELECT role, message FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 5`).all(chatId).reverse();
 
@@ -609,8 +697,6 @@ ${memoryText}
         { role: "user", content: cleanMessage }
       ]
     };
-
-    console.log("📤 Запрос к OpenRouter (сжатый)");
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000);
@@ -663,7 +749,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     const filePath = req.file.path;
     const mimetype = req.file.mimetype;
     const filename = req.file.originalname;
-    const userQuestion = req.body.question || 'Опиши, что изображено на картинке.';
+    const userQuestion = (req.body.question || 'Опиши, что изображено на картинке.').toString().slice(0, 500);
 
     if (mimetype === 'text/plain') {
       const content = fs.readFileSync(filePath, 'utf-8');
@@ -682,42 +768,49 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       const base64Image = imageBuffer.toString('base64');
       const mimeType = mimetype;
 
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${process.env.OPENROUTER_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          model: "openai/gpt-4o",
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "text", text: userQuestion },
-                {
-                  type: "image_url",
-                  image_url: { url: `data:${mimeType};base64,${base64Image}` }
-                }
-              ]
-            }
-          ],
-          max_tokens: 500,
-          temperature: 0.7
-        })
-      });
+      let response;
+      try {
+        response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${process.env.OPENROUTER_KEY}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            model: "openai/gpt-4o",
+            messages: [
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: userQuestion },
+                  {
+                    type: "image_url",
+                    image_url: { url: `data:${mimeType};base64,${base64Image}` }
+                  }
+                ]
+              }
+            ],
+            max_tokens: 500,
+            temperature: 0.7
+          })
+        });
+      } catch (fetchErr) {
+        // Гарантируем удаление временного файла даже если сам fetch упал (сеть/таймаут)
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        throw fetchErr;
+      }
 
       if (!response.ok) {
         const errorText = await response.text();
         console.error("OpenRouter Vision error:", response.status, errorText);
-        fs.unlinkSync(filePath);
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
         return res.status(500).json({ error: 'Ошибка анализа изображения' });
       }
 
       const data = await response.json();
       const analysis = data.choices?.[0]?.message?.content || 'Не удалось распознать изображение.';
 
-      fs.unlinkSync(filePath);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
       return res.json({
         success: true,
@@ -729,6 +822,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
       });
     }
 
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     return res.status(400).json({ error: 'Неподдерживаемый формат файла' });
   } catch (error) {
     console.error('Upload error:', error);
@@ -765,9 +859,15 @@ app.delete("/memory", (req, res) => {
 // ===== УДАЛИТЬ ЧАТ =====
 app.delete("/chats/:id", (req, res) => {
   try {
+    const userId = req.userId;
     const id = req.params.id;
+    // Раньше тут не проверялось, что чат принадлежит текущему пользователю —
+    // любой авторизованный пользователь мог удалить чужой чат по ID.
+    const chat = db.prepare("SELECT id FROM conversations WHERE id = ? AND user_id = ?").get(id, userId);
+    if (!chat) return res.status(404).json({ error: "Чат не найден" });
+
     db.prepare(`DELETE FROM messages WHERE chat_id = ?`).run(id);
-    db.prepare(`DELETE FROM conversations WHERE id = ?`).run(id);
+    db.prepare(`DELETE FROM conversations WHERE id = ? AND user_id = ?`).run(id, userId);
     res.json({ success: true });
   } catch (error) {
     console.log("DELETE CHAT ERROR:", error);
@@ -778,25 +878,23 @@ app.delete("/chats/:id", (req, res) => {
 // ===== TTS =====
 app.post('/tts', async (req, res) => {
   const { text } = req.body;
-  console.log("📥 TTS запрос, текст:", text);
-  if (!text) {
+  if (!text || typeof text !== 'string') {
     return res.status(400).json({ error: 'Нет текста' });
+  }
+  if (text.length > 1000) {
+    return res.status(400).json({ error: 'Текст слишком длинный' });
   }
 
   const apiKey = process.env.YANDEX_API_KEY;
   if (!apiKey) {
     console.error("❌ YANDEX_API_KEY отсутствует");
-    return res.status(500).json({ error: 'Ключ Яндекс не настроен' });
+    return res.status(500).json({ error: 'Синтез речи недоступен' });
   }
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => {
-    console.warn("⏰ Таймаут TTS (15 сек)");
-    controller.abort();
-  }, 15000);
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
 
   try {
-    console.log("🔑 Отправка запроса к Яндекс SpeechKit...");
     const response = await fetch('https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize', {
       method: 'POST',
       headers: {
@@ -816,16 +914,13 @@ app.post('/tts', async (req, res) => {
 
     clearTimeout(timeoutId);
 
-    console.log("📬 Статус ответа Яндекс:", response.status);
-
     if (!response.ok) {
       const errorText = await response.text();
       console.error('❌ Яндекс TTS ошибка:', response.status, errorText);
-      return res.status(500).json({ error: 'Ошибка синтеза речи: ' + errorText });
+      return res.status(500).json({ error: 'Ошибка синтеза речи' });
     }
 
     const audioBuffer = await response.arrayBuffer();
-    console.log("✅ TTS успешно, размер аудио:", audioBuffer.byteLength);
 
     res.setHeader('Content-Type', 'audio/mpeg');
     res.send(Buffer.from(audioBuffer));
@@ -948,6 +1043,13 @@ app.delete("/admin/users/:id", (req, res) => {
     console.error("Delete user error:", error);
     res.status(500).json({ error: "Ошибка удаления пользователя" });
   }
+});
+
+// ===== Централизованный обработчик ошибок (страховка от утечки стектрейсов) =====
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: "Внутренняя ошибка сервера" });
 });
 
 // ===== ЗАПУСК =====
