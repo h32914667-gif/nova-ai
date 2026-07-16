@@ -144,7 +144,7 @@ export default function App() {
       await sleep(500);
       setLoading(false);
 
-      // Если уже есть токен – загружаем данные
+      // Проверяем, есть ли сохранённый пользователь и токен
       const savedUserId = localStorage.getItem("userId");
       const savedUsername = localStorage.getItem("username");
       const token = localStorage.getItem("token");
@@ -156,10 +156,7 @@ export default function App() {
         setIsAdmin(adminStatus);
         await loadSubscription();
       } else {
-        // Если не Telegram – показываем модалку
-        if (!isTelegram) {
-          setShowAuthModal(true);
-        }
+        setShowAuthModal(true);
       }
     }
     boot();
@@ -277,7 +274,7 @@ export default function App() {
   async function togglePin(chatId) {
     try {
       const result = await togglePinChat(chatId);
-      setChats(prev => prev.map(chat =>
+      setChats(prev => prev.map(chat => 
         chat.id === chatId ? { ...chat, pinned: result.pinned } : chat
       ));
     } catch (error) {
@@ -462,11 +459,9 @@ export default function App() {
     } else {
       if (!userText) return;
 
-      // Обычный текст
       const cleanMessage = userText.trim();
       const lower = cleanMessage.toLowerCase();
 
-      // Команда "кто ты"
       if (lower.includes("кто ты") || lower === "кто ты" || lower.includes("ты кто") || lower.includes("кто такая")) {
         const greetings = [
           "Я Nova AI — твой персональный ИИ-ассистент. Меня создал Денис, чтобы помогать тебе в разработке, проектах и повседневных задачах. Горжусь быть частью этого проекта! 🚀",
@@ -484,7 +479,6 @@ export default function App() {
         return;
       }
 
-      // "запомни", "забудь", "меня зовут" – отправляем на сервер
       if (lower.startsWith("запомни") || lower.startsWith("забудь") || lower.startsWith("меня зовут") || lower.match(/^я\s+\w+/)) {
         setMessages(prev => [...prev, { role: "user", text: cleanMessage }]);
         setInput("");
@@ -509,7 +503,6 @@ export default function App() {
         return;
       }
 
-      // Обычный запрос к AI
       setMessages(prev => [...prev, { role: "user", text: cleanMessage }]);
       setInput("");
       setSending(true);
@@ -728,6 +721,50 @@ export default function App() {
                 >
                   Продолжить как гость
                 </button>
+                {/* ===== НОВАЯ КНОПКА ВХОДА ЧЕРЕЗ TELEGRAM ===== */}
+                <button
+                  onClick={async () => {
+                    try {
+                      const tg = window.Telegram?.WebApp;
+                      if (!tg) {
+                        alert('Откройте приложение в Telegram');
+                        return;
+                      }
+                      const user = tg.initDataUnsafe?.user;
+                      if (!user) {
+                        alert('Не удалось получить данные пользователя Telegram');
+                        return;
+                      }
+                      const response = await fetch(`${API}/telegram-login`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ initData: tg.initData, user })
+                      });
+                      const data = await response.json();
+                      if (data.token) {
+                        localStorage.setItem('token', data.token);
+                        localStorage.setItem('userId', data.userId);
+                        localStorage.setItem('username', data.username);
+                        setUserName(data.username);
+                        setShowAuthModal(false);
+                        await loadChats();
+                        const adminStatus = await checkAdmin();
+                        setIsAdmin(adminStatus);
+                        await loadSubscription();
+                        // Обновляем страницу, чтобы подхватился telegram_id
+                        window.location.reload();
+                      } else {
+                        alert('Ошибка входа через Telegram');
+                      }
+                    } catch (error) {
+                      console.error('Telegram auth error:', error);
+                      alert('Ошибка входа через Telegram');
+                    }
+                  }}
+                  className="w-full mt-2 py-3 rounded-2xl bg-gradient-to-r from-blue-500 to-blue-600 text-white font-medium transition hover:scale-[1.02]"
+                >
+                  🔑 Войти через Telegram
+                </button>
               </div>
             </div>
           </div>
@@ -812,8 +849,8 @@ export default function App() {
                   >
                     {chat.pinned ? '📌' : '💬'} {chat.title || "Новый чат"}
                   </button>
-                  <button
-                    onClick={() => togglePin(chat.id)}
+                  <button 
+                    onClick={() => togglePin(chat.id)} 
                     className={`transition-all duration-200 hover:scale-110 ${
                       chat.pinned ? 'text-yellow-400' : 'text-slate-500 hover:text-yellow-400'
                     }`}
@@ -821,8 +858,8 @@ export default function App() {
                   >
                     {chat.pinned ? '⭐' : '☆'}
                   </button>
-                  <button
-                    onClick={() => removeChat(chat.id)}
+                  <button 
+                    onClick={() => removeChat(chat.id)} 
                     className="text-red-400 opacity-0 group-hover:opacity-100 transition-opacity hover:scale-110"
                   >
                     ✕
