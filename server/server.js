@@ -38,11 +38,12 @@ console.log("🔑 Ключ OpenRouter загружен и проверен");
 
 const app = express();
 
-// ===== CORS (открытый для твоего фронтенда) =====
+// ===== CORS (закрытый) =====
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5173',
-  process.env.FRONTEND_URL || 'https://nova-ai-ten-ashen.vercel.app'
+  process.env.FRONTEND_URL || 'https://nova-ai-ten-ashen.vercel.app',
+  'https://nova-ai-nov-a.vercel.app'  // 👈 твой фактический фронтенд
 ].filter(Boolean);
 
 app.use(cors({
@@ -56,7 +57,7 @@ app.use(cors({
     }
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],  // 👈 добавлен PATCH
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
@@ -89,7 +90,7 @@ const chatLimiter = rateLimit({
   message: { error: "Слишком много запросов. Подождите минуту." },
   keyGenerator: (req) => {
     if (req.userId) return String(req.userId);
-    // Используем встроенный генератор для IP (корректно обрабатывает IPv6)
+    // Используем встроенный генератор для IPv6
     return rateLimit.ipKeyGenerator(req);
   },
   skip: (req) => req.method === 'OPTIONS'
@@ -347,7 +348,7 @@ app.post("/chats", (req, res) => {
 app.get("/chats", (req, res) => {
   try {
     const userId = req.userId;
-    // Возвращаем с полем pinned
+    // Возвращаем с полем pinned, сортировка по закреплению
     const chats = db.prepare(`SELECT * FROM conversations WHERE user_id = ? ORDER BY pinned DESC, id DESC`).all(userId);
     res.json(chats);
   } catch (error) {
