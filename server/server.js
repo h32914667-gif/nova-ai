@@ -739,7 +739,7 @@ app.post("/generate-image", authenticate, async (req, res) => {
       });
     }
 
-    // Используем openai/dall-e-3 (работает через OpenRouter)
+    // ПРАВИЛЬНОЕ имя модели с провайдером
     const response = await fetch("https://openrouter.ai/api/v1/images/generations", {
       method: "POST",
       headers: {
@@ -747,7 +747,7 @@ app.post("/generate-image", authenticate, async (req, res) => {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "openai/dall-e-3",   // 👈 правильное имя
+        model: "openai/dall-e-3",
         prompt: prompt,
         n: 1,
         size: "1024x1024"
