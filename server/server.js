@@ -87,7 +87,11 @@ const chatLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
   message: { error: "Слишком много запросов. Подождите минуту." },
-  keyGenerator: (req) => req.userId || req.ip,
+  keyGenerator: (req) => {
+    if (req.userId) return String(req.userId);
+    // Используем встроенный генератор для IP (корректно обрабатывает IPv6)
+    return rateLimit.ipKeyGenerator(req);
+  },
   skip: (req) => req.method === 'OPTIONS'
 });
 app.use('/chat', chatLimiter);
