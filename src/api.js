@@ -211,6 +211,20 @@ export async function generateImage(prompt) {
   return await response.json();
 }
 
+// ===== СОЗДАНИЕ ИНВОЙСА ДЛЯ ОПЛАТЫ ПОДПИСКИ =====
+export async function createInvoice(plan) {
+  const response = await fetch(`${API}/create-invoice`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ plan })
+  });
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Ошибка создания счёта");
+  }
+  return await response.json();
+}
+
 // ===== ЗАГРУЗКА ФАЙЛОВ =====
 export async function uploadFile(file, question = "Опиши, что изображено на картинке.") {
   const formData = new FormData();

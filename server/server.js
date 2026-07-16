@@ -7,7 +7,7 @@ const fs = require('fs');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const crypto = require('crypto'); // 👈 добавлен для Telegram
+const crypto = require('crypto');
 const saltRounds = 10;
 const { rateLimit } = require('express-rate-limit');
 
@@ -39,7 +39,7 @@ console.log("🔑 Ключ OpenRouter загружен и проверен");
 
 const app = express();
 
-// ===== CORS (закрытый) =====
+// ===== CORS =====
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5173',
@@ -64,7 +64,7 @@ app.use(cors({
 
 app.use(express.json());
 
-// ===== MIDDLEWARE ДЛЯ ПРОВЕРКИ JWT =====
+// ===== MIDDLEWARE JWT =====
 function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader) {
@@ -143,7 +143,7 @@ try {
   console.error("⚠️ Ошибка создания таблиц (игнорируем):", e.message);
 }
 
-// ===== ДОБАВЛЕНИЕ КОЛОНКИ PINNED (если нет) =====
+// ===== ДОБАВЛЕНИЕ КОЛОНОК =====
 try {
   db.exec(`ALTER TABLE conversations ADD COLUMN pinned INTEGER DEFAULT 0`);
   console.log("✅ Колонка pinned добавлена в conversations");
@@ -153,7 +153,6 @@ try {
   }
 }
 
-// ===== ДОБАВЛЕНИЕ КОЛОНКИ TELEGRAM_ID (если нет) =====
 try {
   db.exec(`ALTER TABLE users ADD COLUMN telegram_id TEXT UNIQUE`);
   console.log("✅ Колонка telegram_id добавлена в users");
@@ -163,7 +162,7 @@ try {
   }
 }
 
-// ===== ЛИМИТЫ =====
+// ===== ЛИМИТЫ И ТАРИФЫ =====
 const FREE_LIMIT = parseInt(process.env.FREE_LIMIT) || 30;
 const PLUS_LIMIT = parseInt(process.env.PLUS_LIMIT) || 200;
 const PRO_LIMIT = Infinity;
@@ -172,18 +171,21 @@ const PLANS = {
   free: {
     name: 'Free',
     price: 0,
+    starsPrice: 0,
     messagesPerDay: FREE_LIMIT,
     features: [`${FREE_LIMIT} сообщений в день`, 'Базовая память']
   },
   plus: {
     name: 'Plus',
     price: 500,
+    starsPrice: 50,
     messagesPerDay: PLUS_LIMIT,
     features: [`${PLUS_LIMIT} сообщений в день`, 'Расширенная память', 'Приоритетная поддержка']
   },
   pro: {
     name: 'Pro',
     price: 1500,
+    starsPrice: 150,
     messagesPerDay: PRO_LIMIT,
     features: ['Безлимит сообщений', 'Все функции Plus', 'Эксклюзивные модели AI']
   }
@@ -285,7 +287,6 @@ function incrementUsage(userId) {
 
 // ===== Эндпоинты =====
 
-// Публичные
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'Nova API is running' });
 });
@@ -294,7 +295,7 @@ app.get("/plans", (req, res) => {
   res.json(PLANS);
 });
 
-// ===== ГОСТЬ (возвращает JWT) =====
+// ===== ГОСТЬ =====
 app.get("/guest", (req, res) => {
   try {
     const userId = getGuest();
@@ -345,16 +346,13 @@ app.post("/telegram-login", async (req, res) => {
   try {
     const { initData, user } = req.body;
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
-
     if (!botToken) {
       return res.status(500).json({ error: 'TELEGRAM_BOT_TOKEN не задан' });
     }
-
     if (!initData || !user) {
       return res.status(400).json({ error: 'Отсутствуют данные от Telegram' });
     }
 
-    // 1. Проверяем подпись (защита от подделки)
     const searchParams = new URLSearchParams(initData);
     const hash = searchParams.get('hash');
     searchParams.delete('hash');
@@ -376,7 +374,6 @@ app.post("/telegram-login", async (req, res) => {
       return res.status(401).json({ error: 'Неверная подпись' });
     }
 
-    // 2. Ищем или создаём пользователя по telegram_id
     const telegramId = user.id.toString();
     let dbUser = db.prepare("SELECT * FROM users WHERE telegram_id = ?").get(telegramId);
 
@@ -386,18 +383,51 @@ app.post("/telegram-login", async (req, res) => {
         INSERT INTO users (username, telegram_id) VALUES (?, ?)
       `).run(username, telegramId);
       dbUser = { id: result.lastInsertRowid, username };
-      // Добавляем подписку free
       db.prepare("INSERT INTO subscriptions (user_id, plan) VALUES (?, ?)").run(dbUser.id, 'free');
       console.log(`✅ Создан новый пользователь из Telegram: ${username}`);
     }
 
-    // 3. Генерируем JWT
     const token = jwt.sign({ userId: dbUser.id }, JWT_SECRET, { expiresIn: '7d' });
     res.json({ token, userId: dbUser.id, username: dbUser.username });
-
   } catch (error) {
     console.error('❌ Telegram login error:', error);
     res.status(500).json({ error: 'Ошибка авторизации через Telegram' });
+  }
+});
+
+// ===== СОЗДАНИЕ ИНВОЙСА ДЛЯ ОПЛАТЫ ПОДПИСКИ =====
+app.post("/create-invoice", authenticate, async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { plan } = req.body;
+
+    if (!PLANS[plan]) {
+      return res.status(400).json({ error: 'Неверный тариф' });
+    }
+    if (plan === 'free') {
+      return res.status(400).json({ error: 'Бесплатный тариф не требует оплаты' });
+    }
+
+    const user = db.prepare("SELECT telegram_id FROM users WHERE id = ?").get(userId);
+    if (!user || !user.telegram_id) {
+      return res.status(400).json({ error: 'У вас не привязан Telegram. Используйте приложение в Telegram.' });
+    }
+
+    const planData = PLANS[plan];
+    const starsPrice = planData.starsPrice;
+    const invoiceId = `sub_${userId}_${Date.now()}`;
+
+    res.json({
+      invoiceId,
+      starsPrice,
+      plan,
+      title: `Подписка ${planData.name}`,
+      description: `Доступ к тарифу ${planData.name} на 30 дней.`,
+      payload: JSON.stringify({ userId, plan, invoiceId })
+    });
+  } catch (error) {
+    console.error('❌ Create invoice error:', error);
+    res.status(500).json({ error: 'Ошибка создания счёта' });
   }
 });
 
@@ -603,7 +633,6 @@ ${memoryText}
     incrementUsage(userId);
 
     res.json({ reply });
-
   } catch (error) {
     console.error("❌ CHAT ERROR:", error);
     if (!res.headersSent) res.status(500).json({ reply: "⚠️ Ошибка сервера" });
@@ -686,7 +715,6 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     }
 
     return res.status(400).json({ error: 'Неподдерживаемый формат файла' });
-
   } catch (error) {
     console.error('Upload error:', error);
     if (req.file && fs.existsSync(req.file.path)) {
@@ -786,7 +814,6 @@ app.post('/tts', async (req, res) => {
 
     res.setHeader('Content-Type', 'audio/mpeg');
     res.send(Buffer.from(audioBuffer));
-
   } catch (error) {
     clearTimeout(timeoutId);
     console.error('❌ TTS error:', error);
