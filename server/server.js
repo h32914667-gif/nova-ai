@@ -341,18 +341,27 @@ app.post("/login", loginLimiter, async (req, res) => {
   }
 });
 
-// ===== АВТОРИЗАЦИЯ ЧЕРЕЗ TELEGRAM =====
+// ===== АВТОРИЗАЦИЯ ЧЕРЕЗ TELEGRAM (с логированием) =====
 app.post("/telegram-login", async (req, res) => {
+  console.log('📩 Получен запрос /telegram-login');
+  console.log('📦 Тело запроса:', JSON.stringify(req.body, null, 2));
+
   try {
     const { initData, user } = req.body;
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
+
+    console.log('🔍 botToken присутствует?', !!botToken);
+
     if (!botToken) {
+      console.error('❌ TELEGRAM_BOT_TOKEN не задан');
       return res.status(500).json({ error: 'TELEGRAM_BOT_TOKEN не задан' });
     }
     if (!initData || !user) {
+      console.error('❌ Отсутствуют initData или user');
       return res.status(400).json({ error: 'Отсутствуют данные от Telegram' });
     }
 
+    // Проверяем подпись
     const searchParams = new URLSearchParams(initData);
     const hash = searchParams.get('hash');
     searchParams.delete('hash');
@@ -369,12 +378,17 @@ app.post("/telegram-login", async (req, res) => {
       .update(dataCheckString)
       .digest('hex');
 
+    console.log('🔍 computedHash:', computedHash);
+    console.log('🔍 hash from Telegram:', hash);
+
     if (computedHash !== hash) {
       console.error('❌ Telegram hash mismatch');
       return res.status(401).json({ error: 'Неверная подпись' });
     }
 
     const telegramId = user.id.toString();
+    console.log('🔍 telegramId:', telegramId);
+
     let dbUser = db.prepare("SELECT * FROM users WHERE telegram_id = ?").get(telegramId);
 
     if (!dbUser) {
@@ -388,6 +402,7 @@ app.post("/telegram-login", async (req, res) => {
     }
 
     const token = jwt.sign({ userId: dbUser.id }, JWT_SECRET, { expiresIn: '7d' });
+    console.log('✅ Успешный вход, токен сгенерирован');
     res.json({ token, userId: dbUser.id, username: dbUser.username });
   } catch (error) {
     console.error('❌ Telegram login error:', error);
