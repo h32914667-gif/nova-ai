@@ -11,6 +11,16 @@ if (!token) {
 
 const bot = new Telegraf(token);
 
+// ===== Сброс webhook (на всякий случай) =====
+(async () => {
+  try {
+    await bot.telegram.setWebhook('');
+    console.log('✅ Webhook сброшен');
+  } catch (e) {
+    console.warn('⚠️ Не удалось сбросить webhook:', e.message);
+  }
+})();
+
 // ===== Обработчик команды /start =====
 bot.start((ctx) => {
   const userName = ctx.from.first_name || 'друг';
@@ -57,34 +67,16 @@ bot.on('successful_payment', async (ctx) => {
   }
 });
 
-// ===== Функция запуска бота с повторными попытками =====
-async function startBot() {
-  try {
-    // Уникальный offset, чтобы не конфликтовать с другими экземплярами
-    const offset = Math.floor(Date.now() / 1000);
-    console.log(`🚀 Запуск бота с offset: ${offset}`);
-
-    await bot.launch({
-      polling: {
-        timeout: 30,
-        limit: 100,
-        offset: offset
-      }
-    });
-    console.log('🤖 Telegram бот запущен и готов к работе!');
-  } catch (err) {
-    if (err.response && err.response.error_code === 409) {
-      console.warn('⚠️ Конфликт (409). Повторный запуск через 5 секунд...');
-      setTimeout(startBot, 30000); // 30 секунд
-    } else {
-      console.error('❌ Ошибка запуска бота:', err);
-      process.exit(1);
-    }
+// ===== Запуск бота с настройками =====
+bot.launch({
+  polling: {
+    timeout: 30,
+    limit: 100,
+    // telegraf-hardened сам будет обрабатывать 409 с экспоненциальной задержкой
   }
-}
+});
 
-// ===== Запускаем бота =====
-startBot();
+console.log('🤖 Telegram бот запущен и готов к работе!');
 
 // ===== Обработка ошибок =====
 bot.catch((err) => {
@@ -113,6 +105,6 @@ const server = http.createServer((req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`🩺 Health check server running on port ${PORT}`);
 });
