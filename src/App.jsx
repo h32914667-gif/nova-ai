@@ -25,12 +25,13 @@ import {
   upgradePlan,
   getPlans,
   togglePinChat,
-  generateImage,  // 👈 добавлен импорт
   API
 } from "./api";
 
 import AdminPanel from "./components/AdminPanel";
 import Subscription from "./components/Subscription";
+
+import { useTelegram } from "./hooks/useTelegram";
 
 import logo from "./assets/nova-logo.png";
 
@@ -39,6 +40,9 @@ function sleep(ms) {
 }
 
 export default function App() {
+  // ===== TELEGRAM HOOK =====
+  const { tg, user, isTelegram } = useTelegram();
+
   // ===== STATE =====
   const [loading, setLoading] = useState(true);
   const [loadingFade, setLoadingFade] = useState(false);
@@ -95,6 +99,35 @@ export default function App() {
 
   const chatEnd = useRef(null);
 
+  // ===== АВТОМАТИЧЕСКИЙ ВХОД ЧЕРЕЗ TELEGRAM =====
+  useEffect(() => {
+    if (user && isTelegram) {
+      (async () => {
+        try {
+          const response = await fetch(`${API}/telegram-login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ initData: tg.initData, user })
+          });
+          const data = await response.json();
+          if (data.token) {
+            localStorage.setItem('token', data.token);
+            localStorage.setItem('userId', data.userId);
+            localStorage.setItem('username', data.username);
+            setUserName(data.username);
+            setShowAuthModal(false);
+            await loadChats();
+            const adminStatus = await checkAdmin();
+            setIsAdmin(adminStatus);
+            await loadSubscription();
+          }
+        } catch (error) {
+          console.error('Telegram auth error:', error);
+        }
+      })();
+    }
+  }, [user, isTelegram]);
+
   // ===== START NOVA =====
   useEffect(() => {
     async function boot() {
@@ -111,7 +144,7 @@ export default function App() {
       await sleep(500);
       setLoading(false);
 
-      // Проверяем, есть ли сохранённый пользователь и токен
+      // Если уже есть токен – загружаем данные
       const savedUserId = localStorage.getItem("userId");
       const savedUsername = localStorage.getItem("username");
       const token = localStorage.getItem("token");
@@ -123,7 +156,10 @@ export default function App() {
         setIsAdmin(adminStatus);
         await loadSubscription();
       } else {
-        setShowAuthModal(true);
+        // Если не Telegram – показываем модалку
+        if (!isTelegram) {
+          setShowAuthModal(true);
+        }
       }
     }
     boot();
@@ -241,7 +277,7 @@ export default function App() {
   async function togglePin(chatId) {
     try {
       const result = await togglePinChat(chatId);
-      setChats(prev => prev.map(chat => 
+      setChats(prev => prev.map(chat =>
         chat.id === chatId ? { ...chat, pinned: result.pinned } : chat
       ));
     } catch (error) {
@@ -423,173 +459,86 @@ export default function App() {
         setTyping(false);
         setNovaStatus("Готова");
       }
-      return;
-    }
+    } else {
+      if (!userText) return;
 
-    // ===== ОБЫЧНОЕ СООБЩЕНИЕ (текст) =====
-    if (!userText) return;
+      // Обычный текст
+      const cleanMessage = userText.trim();
+      const lower = cleanMessage.toLowerCase();
 
-    const cleanMessage = userText.trim();
-    const lower = cleanMessage.toLowerCase();
-
-    // === Обработка специальных команд (которые не требуют AI) ===
-    if (lower.includes("кто ты") || lower === "кто ты" || lower.includes("ты кто") || lower.includes("кто такая")) {
-      const greetings = [
-        "Я Nova AI — твой персональный ИИ-ассистент. Меня создал Денис, чтобы помогать тебе в разработке, проектах и повседневных задачах. Горжусь быть частью этого проекта! 🚀",
-        "Привет! Я Nova AI, твой цифровой помощник. Меня создал Денис, и моя задача — делать твою жизнь проще и интереснее. Чем могу помочь сегодня? 😊",
-        "Я Nova AI — не просто бот, а полноценный ИИ-помощник с характером. Мой создатель — Денис, он вложил в меня душу. Рассказывай, что нужно сделать! 🔥",
-        "О, это хороший вопрос! Я Nova AI — персональный ассистент, созданный Денисом для работы с кодом, проектами и идеями. У меня есть чувство юмора и я обожаю сложные задачи. Чем займёмся?"
-      ];
-      const randomReply = greetings[Math.floor(Math.random() * greetings.length)];
-      setMessages(prev => [...prev, { role: "user", text: cleanMessage }]);
-      setMessages(prev => [...prev, { role: "ai", text: randomReply }]);
-      setInput("");
-      if (remainingMessages !== null && remainingMessages !== Infinity) {
-        setRemainingMessages(prev => prev - 1);
-      }
-      return;
-    }
-
-    if (lower.startsWith("запомни")) {
-      const text = cleanMessage.replace(/запомни/i, "").trim();
-      // Здесь память обрабатывается на сервере, но мы отправим это как обычное сообщение,
-      // чтобы сервер обработал команду. Поэтому просто отправляем в askNova.
-      // Но мы не хотим дублировать сообщение пользователя, поэтому добавим его вручную.
-      setMessages(prev => [...prev, { role: "user", text: cleanMessage }]);
-      setInput("");
-      setSending(true);
-      setTyping(true);
-      setNovaStatus("Запоминаю...");
-      try {
-        const result = await askNova(activeChatId, cleanMessage);
-        const reply = result.reply || "🧠 Запомнила!";
-        setMessages(prev => [...prev, { role: "ai", text: reply }]);
+      // Команда "кто ты"
+      if (lower.includes("кто ты") || lower === "кто ты" || lower.includes("ты кто") || lower.includes("кто такая")) {
+        const greetings = [
+          "Я Nova AI — твой персональный ИИ-ассистент. Меня создал Денис, чтобы помогать тебе в разработке, проектах и повседневных задачах. Горжусь быть частью этого проекта! 🚀",
+          "Привет! Я Nova AI, твой цифровой помощник. Меня создал Денис, и моя задача — делать твою жизнь проще и интереснее. Чем могу помочь сегодня? 😊",
+          "Я Nova AI — не просто бот, а полноценный ИИ-помощник с характером. Мой создатель — Денис, он вложил в меня душу. Рассказывай, что нужно сделать! 🔥",
+          "О, это хороший вопрос! Я Nova AI — персональный ассистент, созданный Денисом для работы с кодом, проектами и идеями. У меня есть чувство юмора и я обожаю сложные задачи. Чем займёмся?"
+        ];
+        const randomReply = greetings[Math.floor(Math.random() * greetings.length)];
+        setMessages(prev => [...prev, { role: "user", text: cleanMessage }]);
+        setMessages(prev => [...prev, { role: "ai", text: randomReply }]);
+        setInput("");
         if (remainingMessages !== null && remainingMessages !== Infinity) {
           setRemainingMessages(prev => prev - 1);
         }
-      } catch (error) {
-        console.error("Error:", error);
-        setMessages(prev => [...prev, { role: "ai", text: "⚠️ Ошибка" }]);
-      } finally {
-        setSending(false);
-        setTyping(false);
-        setNovaStatus("Готова");
-      }
-      return;
-    }
-
-    if (lower.startsWith("забудь")) {
-      setMessages(prev => [...prev, { role: "user", text: cleanMessage }]);
-      setInput("");
-      setSending(true);
-      setTyping(true);
-      setNovaStatus("Забываю...");
-      try {
-        const result = await askNova(activeChatId, cleanMessage);
-        const reply = result.reply || "🗑 Забыла.";
-        setMessages(prev => [...prev, { role: "ai", text: reply }]);
-        if (remainingMessages !== null && remainingMessages !== Infinity) {
-          setRemainingMessages(prev => prev - 1);
-        }
-      } catch (error) {
-        console.error("Error:", error);
-        setMessages(prev => [...prev, { role: "ai", text: "⚠️ Ошибка" }]);
-      } finally {
-        setSending(false);
-        setTyping(false);
-        setNovaStatus("Готова");
-      }
-      return;
-    }
-
-    if (lower.startsWith("меня зовут") || lower.match(/^я\s+\w+/)) {
-      // Аналогично отправляем на сервер, но можно и локально обработать, но лучше через сервер.
-      setMessages(prev => [...prev, { role: "user", text: cleanMessage }]);
-      setInput("");
-      setSending(true);
-      setTyping(true);
-      setNovaStatus("Запоминаю имя...");
-      try {
-        const result = await askNova(activeChatId, cleanMessage);
-        const reply = result.reply || "Ок, запомнила!";
-        setMessages(prev => [...prev, { role: "ai", text: reply }]);
-        if (remainingMessages !== null && remainingMessages !== Infinity) {
-          setRemainingMessages(prev => prev - 1);
-        }
-      } catch (error) {
-        console.error("Error:", error);
-        setMessages(prev => [...prev, { role: "ai", text: "⚠️ Ошибка" }]);
-      } finally {
-        setSending(false);
-        setTyping(false);
-        setNovaStatus("Готова");
-      }
-      return;
-    }
-
-    // ===== ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ =====
-    if (lower.startsWith("нарисуй") || lower.startsWith("сгенерируй") || lower.startsWith("покажи")) {
-      const imagePrompt = cleanMessage.replace(/^(нарисуй|сгенерируй|покажи)\s*/i, "").trim();
-      if (!imagePrompt) {
-        setMessages(prev => [...prev, { role: "ai", text: "Что нарисовать? Напиши описание." }]);
-        setTyping(false);
-        setSending(false);
         return;
       }
-      setMessages(prev => [...prev, { role: "user", text: `🎨 ${cleanMessage}` }]);
+
+      // "запомни", "забудь", "меня зовут" – отправляем на сервер
+      if (lower.startsWith("запомни") || lower.startsWith("забудь") || lower.startsWith("меня зовут") || lower.match(/^я\s+\w+/)) {
+        setMessages(prev => [...prev, { role: "user", text: cleanMessage }]);
+        setInput("");
+        setSending(true);
+        setTyping(true);
+        setNovaStatus("Думаю...");
+        try {
+          const result = await askNova(activeChatId, cleanMessage);
+          const reply = result.reply || "Готово!";
+          setMessages(prev => [...prev, { role: "ai", text: reply }]);
+          if (remainingMessages !== null && remainingMessages !== Infinity) {
+            setRemainingMessages(prev => prev - 1);
+          }
+        } catch (error) {
+          console.error("Error:", error);
+          setMessages(prev => [...prev, { role: "ai", text: "⚠️ Ошибка" }]);
+        } finally {
+          setSending(false);
+          setTyping(false);
+          setNovaStatus("Готова");
+        }
+        return;
+      }
+
+      // Обычный запрос к AI
+      setMessages(prev => [...prev, { role: "user", text: cleanMessage }]);
       setInput("");
       setSending(true);
       setTyping(true);
-      setNovaStatus("Рисую...");
+      setNovaStatus("Думаю...");
 
       try {
-        const result = await generateImage(imagePrompt);
-        const imageMarkdown = `![${imagePrompt}](${result.imageUrl})`;
-        setMessages(prev => [...prev, { role: "ai", text: `Вот что я нарисовала по запросу: «${imagePrompt}»\n\n${imageMarkdown}` }]);
+        const result = await askNova(activeChatId, cleanMessage);
+        if (result.rateLimit) {
+          setRateLimit(result.rateLimit);
+        }
+        const reply = result.reply || "⚠️ Пустой ответ";
+        setMessages(prev => [...prev, { role: "ai", text: reply }]);
         setNovaStatus("Готова");
         if (remainingMessages !== null && remainingMessages !== Infinity) {
           setRemainingMessages(prev => prev - 1);
         }
       } catch (error) {
-        console.error("Image generation error:", error);
-        setMessages(prev => [...prev, { role: "ai", text: `❌ Ошибка: ${error.message || "не удалось сгенерировать изображение"}` }]);
+        console.error("Nova error:", error);
+        let errorText = "⚠️ Ошибка связи с Nova";
+        if (error.message && error.message.includes("Слишком много запросов")) {
+          errorText = "⏳ Слишком много запросов. Подождите минуту.";
+        }
+        setMessages(prev => [...prev, { role: "ai", text: errorText }]);
       } finally {
         setTyping(false);
         setSending(false);
         setNovaStatus("Готова");
       }
-      return;
-    }
-
-    // ===== ОБЫЧНЫЙ ЗАПРОС К AI =====
-    setMessages(prev => [...prev, { role: "user", text: cleanMessage }]);
-    setInput("");
-    setSending(true);
-    setTyping(true);
-    setNovaStatus("Думаю...");
-
-    try {
-      const result = await askNova(activeChatId, cleanMessage);
-      if (result.rateLimit) {
-        setRateLimit(result.rateLimit);
-      }
-      const reply = result.reply || "⚠️ Пустой ответ";
-      setMessages(prev => [...prev, { role: "ai", text: reply }]);
-      setNovaStatus("Готова");
-      if (remainingMessages !== null && remainingMessages !== Infinity) {
-        setRemainingMessages(prev => prev - 1);
-      }
-    } catch (error) {
-      console.error("Nova error:", error);
-      let errorText = "⚠️ Ошибка связи с Nova";
-      if (error.message && error.message.includes("Слишком много запросов")) {
-        errorText = "⏳ Слишком много запросов. Подождите минуту.";
-      }
-      setMessages(prev => [...prev, { role: "ai", text: errorText }]);
-    } finally {
-      setTyping(false);
-      setSending(false);
-      setNovaStatus("Готова");
     }
   }
 
@@ -863,8 +812,8 @@ export default function App() {
                   >
                     {chat.pinned ? '📌' : '💬'} {chat.title || "Новый чат"}
                   </button>
-                  <button 
-                    onClick={() => togglePin(chat.id)} 
+                  <button
+                    onClick={() => togglePin(chat.id)}
                     className={`transition-all duration-200 hover:scale-110 ${
                       chat.pinned ? 'text-yellow-400' : 'text-slate-500 hover:text-yellow-400'
                     }`}
@@ -872,8 +821,8 @@ export default function App() {
                   >
                     {chat.pinned ? '⭐' : '☆'}
                   </button>
-                  <button 
-                    onClick={() => removeChat(chat.id)} 
+                  <button
+                    onClick={() => removeChat(chat.id)}
                     className="text-red-400 opacity-0 group-hover:opacity-100 transition-opacity hover:scale-110"
                   >
                     ✕
@@ -1063,7 +1012,7 @@ export default function App() {
                                   strong: ({ children }) => <strong className="text-white font-semibold">{children}</strong>,
                                   blockquote: ({ children }) => <blockquote className="border-l-4 border-indigo-500 pl-3 sm:pl-4 italic text-slate-400 my-2 text-sm sm:text-base">{children}</blockquote>,
                                   code: ({ children }) => <pre className="bg-black/50 rounded-xl p-3 sm:p-4 overflow-x-auto text-xs sm:text-sm text-green-300 border border-white/5"><code>{children}</code></pre>,
-                                  img: ({ src, alt }) => <img src={src} alt={alt} className="rounded-2xl max-w-full shadow-lg my-2" /> // 👈 добавлен компонент img
+                                  img: ({ src, alt }) => <img src={src} alt={alt} className="rounded-2xl max-w-full shadow-lg my-2" />
                                 }}
                               >
                                 {String(msg.text || "")}
@@ -1116,7 +1065,7 @@ export default function App() {
                                   strong: ({ children }) => <strong className="text-white font-semibold">{children}</strong>,
                                   blockquote: ({ children }) => <blockquote className="border-l-4 border-indigo-500 pl-3 sm:pl-4 italic text-slate-400 my-2 text-sm sm:text-base">{children}</blockquote>,
                                   code: ({ children }) => <pre className="bg-black/50 rounded-xl p-3 sm:p-4 overflow-x-auto text-xs sm:text-sm text-green-300 border border-white/5"><code>{children}</code></pre>,
-                                  img: ({ src, alt }) => <img src={src} alt={alt} className="rounded-2xl max-w-full shadow-lg my-2" /> // 👈 добавлен компонент img
+                                  img: ({ src, alt }) => <img src={src} alt={alt} className="rounded-2xl max-w-full shadow-lg my-2" />
                                 }}
                               >
                                 {String(msg.text || "")}

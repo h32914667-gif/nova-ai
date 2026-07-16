@@ -7,6 +7,7 @@ const fs = require('fs');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto'); // 👈 добавлен для Telegram
 const saltRounds = 10;
 const { rateLimit } = require('express-rate-limit');
 
@@ -149,6 +150,16 @@ try {
 } catch (e) {
   if (!e.message.includes("duplicate column name")) {
     console.warn("⚠️ Ошибка добавления pinned (игнорируем):", e.message);
+  }
+}
+
+// ===== ДОБАВЛЕНИЕ КОЛОНКИ TELEGRAM_ID (если нет) =====
+try {
+  db.exec(`ALTER TABLE users ADD COLUMN telegram_id TEXT UNIQUE`);
+  console.log("✅ Колонка telegram_id добавлена в users");
+} catch (e) {
+  if (!e.message.includes("duplicate column name")) {
+    console.warn("⚠️ Ошибка добавления telegram_id (игнорируем):", e.message);
   }
 }
 
@@ -326,6 +337,67 @@ app.post("/login", loginLimiter, async (req, res) => {
   } catch (error) {
     console.error("Login error:", error);
     res.status(500).json({ error: "Ошибка входа" });
+  }
+});
+
+// ===== АВТОРИЗАЦИЯ ЧЕРЕЗ TELEGRAM =====
+app.post("/telegram-login", async (req, res) => {
+  try {
+    const { initData, user } = req.body;
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
+
+    if (!botToken) {
+      return res.status(500).json({ error: 'TELEGRAM_BOT_TOKEN не задан' });
+    }
+
+    if (!initData || !user) {
+      return res.status(400).json({ error: 'Отсутствуют данные от Telegram' });
+    }
+
+    // 1. Проверяем подпись (защита от подделки)
+    const searchParams = new URLSearchParams(initData);
+    const hash = searchParams.get('hash');
+    searchParams.delete('hash');
+    searchParams.sort();
+
+    const dataCheckString = [...searchParams.entries()]
+      .map(([key, value]) => `${key}=${value}`)
+      .join('\n');
+
+    const secretKey = crypto.createHash('sha256')
+      .update(botToken)
+      .digest();
+    const computedHash = crypto.createHmac('sha256', secretKey)
+      .update(dataCheckString)
+      .digest('hex');
+
+    if (computedHash !== hash) {
+      console.error('❌ Telegram hash mismatch');
+      return res.status(401).json({ error: 'Неверная подпись' });
+    }
+
+    // 2. Ищем или создаём пользователя по telegram_id
+    const telegramId = user.id.toString();
+    let dbUser = db.prepare("SELECT * FROM users WHERE telegram_id = ?").get(telegramId);
+
+    if (!dbUser) {
+      const username = user.username || user.first_name || `tg_${telegramId}`;
+      const result = db.prepare(`
+        INSERT INTO users (username, telegram_id) VALUES (?, ?)
+      `).run(username, telegramId);
+      dbUser = { id: result.lastInsertRowid, username };
+      // Добавляем подписку free
+      db.prepare("INSERT INTO subscriptions (user_id, plan) VALUES (?, ?)").run(dbUser.id, 'free');
+      console.log(`✅ Создан новый пользователь из Telegram: ${username}`);
+    }
+
+    // 3. Генерируем JWT
+    const token = jwt.sign({ userId: dbUser.id }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token, userId: dbUser.id, username: dbUser.username });
+
+  } catch (error) {
+    console.error('❌ Telegram login error:', error);
+    res.status(500).json({ error: 'Ошибка авторизации через Telegram' });
   }
 });
 
@@ -719,60 +791,6 @@ app.post('/tts', async (req, res) => {
     clearTimeout(timeoutId);
     console.error('❌ TTS error:', error);
     res.status(500).json({ error: 'Ошибка синтеза речи' });
-  }
-});
-
-// ===== ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ =====
-app.post("/generate-image", authenticate, async (req, res) => {
-  try {
-    const userId = req.userId;
-    const { prompt } = req.body;
-
-    if (!prompt || prompt.trim().length < 3) {
-      return res.status(400).json({ error: "Слишком короткий запрос" });
-    }
-
-    const limitCheck = checkLimit(userId);
-    if (!limitCheck.allowed) {
-      return res.status(429).json({
-        error: `❌ Дневной лимит исчерпан (${limitCheck.limit} в день)`
-      });
-    }
-
-    const response = await fetch("https://openrouter.ai/api/v1/images/generations", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.OPENROUTER_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "stabilityai/stable-diffusion-xl", // 👈 правильное имя
-        prompt: prompt,
-        n: 1,
-        size: "1024x1024"
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("❌ OpenRouter Image error:", response.status, errorText);
-      return res.status(500).json({ error: `Ошибка генерации: ${response.status}` });
-    }
-
-    const data = await response.json();
-    console.log("✅ OpenRouter Image response:", JSON.stringify(data, null, 2));
-
-    const imageUrl = data.data?.[0]?.url;
-    if (!imageUrl) {
-      console.error("❌ Нет URL в ответе:", data);
-      return res.status(500).json({ error: "Не удалось получить URL изображения" });
-    }
-
-    incrementUsage(userId);
-    res.json({ imageUrl });
-  } catch (error) {
-    console.error("❌ Generate image error:", error);
-    res.status(500).json({ error: "Ошибка генерации" });
   }
 });
 
