@@ -57,16 +57,34 @@ bot.on('successful_payment', async (ctx) => {
   }
 });
 
-// ===== Запуск бота с уникальным offset =====
-bot.launch({
-  polling: {
-    timeout: 30,           // таймаут в секундах
-    limit: 1,              // количество обновлений за раз
-    offset: Math.floor(Date.now() / 1000) // уникальный офсет для предотвращения конфликтов
-  }
-});
+// ===== Функция запуска бота с повторными попытками =====
+async function startBot() {
+  try {
+    // Уникальный offset, чтобы не конфликтовать с другими экземплярами
+    const offset = Math.floor(Date.now() / 1000);
+    console.log(`🚀 Запуск бота с offset: ${offset}`);
 
-console.log('🤖 Telegram бот запущен и готов к работе!');
+    await bot.launch({
+      polling: {
+        timeout: 30,
+        limit: 100,
+        offset: offset
+      }
+    });
+    console.log('🤖 Telegram бот запущен и готов к работе!');
+  } catch (err) {
+    if (err.response && err.response.error_code === 409) {
+      console.warn('⚠️ Конфликт (409). Повторный запуск через 5 секунд...');
+      setTimeout(startBot, 5000);
+    } else {
+      console.error('❌ Ошибка запуска бота:', err);
+      process.exit(1);
+    }
+  }
+}
+
+// ===== Запускаем бота =====
+startBot();
 
 // ===== Обработка ошибок =====
 bot.catch((err) => {
@@ -74,8 +92,14 @@ bot.catch((err) => {
 });
 
 // ===== Graceful shutdown =====
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+process.once('SIGINT', () => {
+  bot.stop('SIGINT');
+  server.close(() => console.log('HTTP server closed'));
+});
+process.once('SIGTERM', () => {
+  bot.stop('SIGTERM');
+  server.close(() => console.log('HTTP server closed'));
+});
 
 // ===== HTTP-сервер для health check =====
 const PORT = process.env.PORT || 3000;
@@ -92,6 +116,3 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, () => {
   console.log(`🩺 Health check server running on port ${PORT}`);
 });
-
-process.once('SIGINT', () => server.close(() => console.log('HTTP server closed')));
-process.once('SIGTERM', () => server.close(() => console.log('HTTP server closed')));
