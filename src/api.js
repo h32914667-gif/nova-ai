@@ -101,6 +101,19 @@ export async function deleteChat(chatId) {
   return await response.json();
 }
 
+// ===== ПЕРЕКЛЮЧИТЬ ЗАКРЕПЛЕНИЕ ЧАТА =====
+export async function togglePinChat(chatId) {
+  const response = await fetch(`${API}/chats/${chatId}/pin`, {
+    method: "PATCH",
+    headers: getHeaders()
+  });
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Ошибка закрепления");
+  }
+  return await response.json();
+}
+
 // ===== СООБЩЕНИЯ =====
 export async function getMessages(chatId) {
   const response = await fetch(`${API}/messages/${chatId}`, {

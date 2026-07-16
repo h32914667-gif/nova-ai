@@ -138,6 +138,16 @@ try {
   console.error("⚠️ Ошибка создания таблиц (игнорируем):", e.message);
 }
 
+// ===== ДОБАВЛЕНИЕ КОЛОНКИ PINNED (если нет) =====
+try {
+  db.exec(`ALTER TABLE conversations ADD COLUMN pinned INTEGER DEFAULT 0`);
+  console.log("✅ Колонка pinned добавлена в conversations");
+} catch (e) {
+  if (!e.message.includes("duplicate column name")) {
+    console.warn("⚠️ Ошибка добавления pinned (игнорируем):", e.message);
+  }
+}
+
 // ===== ЛИМИТЫ =====
 const FREE_LIMIT = parseInt(process.env.FREE_LIMIT) || 30;
 const PLUS_LIMIT = parseInt(process.env.PLUS_LIMIT) || 200;
@@ -333,7 +343,8 @@ app.post("/chats", (req, res) => {
 app.get("/chats", (req, res) => {
   try {
     const userId = req.userId;
-    const chats = db.prepare(`SELECT * FROM conversations WHERE user_id = ? ORDER BY id DESC`).all(userId);
+    // Возвращаем с полем pinned
+    const chats = db.prepare(`SELECT * FROM conversations WHERE user_id = ? ORDER BY pinned DESC, id DESC`).all(userId);
     res.json(chats);
   } catch (error) {
     console.log(error);
@@ -348,6 +359,27 @@ app.get("/messages/:chatId", (req, res) => {
   } catch (error) {
     console.log(error);
     res.status(500).json([]);
+  }
+});
+
+// ===== ПЕРЕКЛЮЧИТЬ ЗАКРЕПЛЕНИЕ ЧАТА =====
+app.patch("/chats/:id/pin", authenticate, (req, res) => {
+  try {
+    const userId = req.userId;
+    const chatId = req.params.id;
+
+    const chat = db.prepare("SELECT id, pinned FROM conversations WHERE id = ? AND user_id = ?").get(chatId, userId);
+    if (!chat) {
+      return res.status(404).json({ error: "Чат не найден" });
+    }
+
+    const newPinned = chat.pinned === 1 ? 0 : 1;
+    db.prepare("UPDATE conversations SET pinned = ? WHERE id = ?").run(newPinned, chatId);
+
+    res.json({ success: true, pinned: newPinned });
+  } catch (error) {
+    console.error("Pin toggle error:", error);
+    res.status(500).json({ error: "Ошибка переключения закрепления" });
   }
 });
 

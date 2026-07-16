@@ -24,6 +24,7 @@ import {
   getSubscription,
   upgradePlan,
   getPlans,
+  togglePinChat,
   API
 } from "./api";
 
@@ -86,6 +87,10 @@ export default function App() {
   const [animations, setAnimations] = useState(true);
   const [showHome, setShowHome] = useState(true);
   const [showScrollButton, setShowScrollButton] = useState(false);
+
+  // ===== СОСТОЯНИЕ ДЛЯ РЕДАКТИРОВАНИЯ СООБЩЕНИЯ =====
+  const [editingIndex, setEditingIndex] = useState(null);
+  const [editText, setEditText] = useState("");
 
   const chatEnd = useRef(null);
 
@@ -231,6 +236,20 @@ export default function App() {
     }
   }
 
+  // ===== ПЕРЕКЛЮЧИТЬ ЗАКРЕПЛЕНИЕ ЧАТА =====
+  async function togglePin(chatId) {
+    try {
+      const result = await togglePinChat(chatId);
+      // Обновляем локальный список чатов
+      setChats(prev => prev.map(chat => 
+        chat.id === chatId ? { ...chat, pinned: result.pinned } : chat
+      ));
+    } catch (error) {
+      console.error("Toggle pin error:", error);
+      alert("Ошибка закрепления чата");
+    }
+  }
+
   // ===== OPEN PROFILE =====
   async function openProfile() {
     try {
@@ -319,6 +338,28 @@ export default function App() {
       chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'smooth' });
     }
   };
+
+  // ===== ОБРАБОТЧИКИ РЕДАКТИРОВАНИЯ =====
+  const handleEditMessage = (index) => {
+    setEditingIndex(index);
+    setEditText(messages[index].text);
+  };
+
+  const handleSaveEdit = (index) => {
+    if (!editText.trim()) return;
+    const newMessages = [...messages];
+    newMessages[index].text = editText.trim();
+    setMessages(newMessages);
+    setEditingIndex(null);
+    setEditText("");
+  };
+
+  // ===== SORTED CHATS (pinned first) =====
+  const sortedChats = [...chats].sort((a, b) => {
+    if (a.pinned && !b.pinned) return -1;
+    if (!a.pinned && b.pinned) return 1;
+    return b.id - a.id;
+  });
 
   // ===== SEND MESSAGE =====
   async function sendMessage(customText) {
@@ -677,18 +718,30 @@ export default function App() {
               <span className="h-px flex-1 bg-white/10"></span>
             </h2>
             <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar">
-              {chats.map(chat => (
+              {sortedChats.map(chat => (
                 <div
                   key={chat.id}
                   className="flex items-center gap-2 bg-white/5 hover:bg-white/10 rounded-xl p-2 transition-all duration-300 group hover:scale-[1.02]"
                 >
                   <button
                     onClick={() => openChat(chat)}
-                    className="flex-1 text-left truncate text-sm"
+                    className="flex-1 text-left truncate text-sm flex items-center gap-1"
                   >
-                    💬 {chat.title || "Новый чат"}
+                    {chat.pinned ? '📌' : '💬'} {chat.title || "Новый чат"}
                   </button>
-                  <button onClick={() => removeChat(chat.id)} className="text-red-400 opacity-0 group-hover:opacity-100 transition-opacity hover:scale-110">
+                  <button 
+                    onClick={() => togglePin(chat.id)} 
+                    className={`transition-all duration-200 hover:scale-110 ${
+                      chat.pinned ? 'text-yellow-400' : 'text-slate-500 hover:text-yellow-400'
+                    }`}
+                    title={chat.pinned ? "Открепить" : "Закрепить"}
+                  >
+                    {chat.pinned ? '⭐' : '☆'}
+                  </button>
+                  <button 
+                    onClick={() => removeChat(chat.id)} 
+                    className="text-red-400 opacity-0 group-hover:opacity-100 transition-opacity hover:scale-110"
+                  >
                     ✕
                   </button>
                 </div>
@@ -832,46 +885,120 @@ export default function App() {
                           <img src={logo} className="w-full h-full rounded-full bg-white/10 p-1" />
                         </div>
                       )}
+
                       <div className="prose prose-invert max-w-full overflow-hidden break-words w-full prose-sm sm:prose-base">
-                        {isFileMessage ? (
-                          <div className="flex items-center gap-2 sm:gap-3 bg-white/5 rounded-xl p-2 sm:p-3 border border-indigo-500/30 hover:bg-white/10 transition-all duration-200">
-                            <span className="text-2xl sm:text-3xl">📄</span>
-                            <div className="flex-1 min-w-0">
-                              <div className="font-medium text-white text-sm sm:text-base truncate">
-                                {msg.text.replace("📎", "").trim()}
+                        {/* ===== СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЯ ===== */}
+                        {msg.role === "user" ? (
+                          <>
+                            {editingIndex === index ? (
+                              <div className="w-full flex gap-2">
+                                <input
+                                  type="text"
+                                  value={editText}
+                                  onChange={(e) => setEditText(e.target.value)}
+                                  className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-2 text-white outline-none focus:border-indigo-500"
+                                  autoFocus
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") handleSaveEdit(index);
+                                    if (e.key === "Escape") setEditingIndex(null);
+                                  }}
+                                />
+                                <button
+                                  onClick={() => handleSaveEdit(index)}
+                                  className="px-4 py-2 bg-green-500/20 rounded-xl text-green-400 hover:bg-green-500/30 transition"
+                                >
+                                  💾
+                                </button>
+                                <button
+                                  onClick={() => setEditingIndex(null)}
+                                  className="px-4 py-2 bg-red-500/20 rounded-xl text-red-400 hover:bg-red-500/30 transition"
+                                >
+                                  ✕
+                                </button>
                               </div>
-                              <div className="text-xs text-slate-400">Файл</div>
-                            </div>
-                          </div>
+                            ) : (
+                              <ReactMarkdown
+                                remarkPlugins={[remarkGfm]}
+                                components={{
+                                  h1: ({ children }) => <h1 className="text-xl sm:text-2xl font-bold text-indigo-400 mt-3 sm:mt-4 mb-1 sm:mb-2">{children}</h1>,
+                                  h2: ({ children }) => <h2 className="text-lg sm:text-xl font-semibold text-purple-300 mt-2 sm:mt-3 mb-1">{children}</h2>,
+                                  h3: ({ children }) => <h3 className="text-base sm:text-lg font-medium text-pink-300 mt-2">{children}</h3>,
+                                  ul: ({ children }) => <ul className="list-disc pl-4 sm:pl-5 space-y-1 text-slate-300">{children}</ul>,
+                                  li: ({ children }) => <li className="marker:text-indigo-400 text-sm sm:text-base">{children}</li>,
+                                  p: ({ children }) => <p className="text-slate-300 my-1 sm:my-2 leading-relaxed text-sm sm:text-base">{children}</p>,
+                                  strong: ({ children }) => <strong className="text-white font-semibold">{children}</strong>,
+                                  blockquote: ({ children }) => <blockquote className="border-l-4 border-indigo-500 pl-3 sm:pl-4 italic text-slate-400 my-2 text-sm sm:text-base">{children}</blockquote>,
+                                  code: ({ children }) => <pre className="bg-black/50 rounded-xl p-3 sm:p-4 overflow-x-auto text-xs sm:text-sm text-green-300 border border-white/5"><code>{children}</code></pre>
+                                }}
+                              >
+                                {String(msg.text || "")}
+                              </ReactMarkdown>
+                            )}
+
+                            {/* ===== КНОПКИ ПОД СООБЩЕНИЕМ ПОЛЬЗОВАТЕЛЯ ===== */}
+                            {editingIndex !== index && (
+                              <div className="flex gap-2 mt-2 sm:mt-4 justify-end">
+                                <button
+                                  onClick={() => navigator.clipboard.writeText(String(msg.text))}
+                                  className="p-1.5 sm:p-2 rounded-lg hover:bg-white/10 transition-all duration-200 hover:scale-110 text-slate-400 hover:text-white"
+                                  title="Копировать"
+                                >
+                                  <Copy size={16} className="sm:w-5 sm:h-5" />
+                                </button>
+                                <button
+                                  onClick={() => handleEditMessage(index)}
+                                  className="p-1.5 sm:p-2 rounded-lg hover:bg-white/10 transition-all duration-200 hover:scale-110 text-slate-400 hover:text-blue-400"
+                                  title="Редактировать"
+                                >
+                                  ✏️
+                                </button>
+                              </div>
+                            )}
+                          </>
                         ) : (
-                          <ReactMarkdown
-                            remarkPlugins={[remarkGfm]}
-                            components={{
-                              h1: ({ children }) => <h1 className="text-xl sm:text-2xl font-bold text-indigo-400 mt-3 sm:mt-4 mb-1 sm:mb-2">{children}</h1>,
-                              h2: ({ children }) => <h2 className="text-lg sm:text-xl font-semibold text-purple-300 mt-2 sm:mt-3 mb-1">{children}</h2>,
-                              h3: ({ children }) => <h3 className="text-base sm:text-lg font-medium text-pink-300 mt-2">{children}</h3>,
-                              ul: ({ children }) => <ul className="list-disc pl-4 sm:pl-5 space-y-1 text-slate-300">{children}</ul>,
-                              li: ({ children }) => <li className="marker:text-indigo-400 text-sm sm:text-base">{children}</li>,
-                              p: ({ children }) => <p className="text-slate-300 my-1 sm:my-2 leading-relaxed text-sm sm:text-base">{children}</p>,
-                              strong: ({ children }) => <strong className="text-white font-semibold">{children}</strong>,
-                              blockquote: ({ children }) => <blockquote className="border-l-4 border-indigo-500 pl-3 sm:pl-4 italic text-slate-400 my-2 text-sm sm:text-base">{children}</blockquote>,
-                              code: ({ children }) => <pre className="bg-black/50 rounded-xl p-3 sm:p-4 overflow-x-auto text-xs sm:text-sm text-green-300 border border-white/5"><code>{children}</code></pre>
-                            }}
-                          >
-                            {String(msg.text || "")}
-                          </ReactMarkdown>
-                        )}
-                        {msg.role === "ai" && (
-                          <div className="flex gap-2 mt-2 sm:mt-4">
-                            <button className="p-1.5 sm:p-2 rounded-lg hover:bg-white/10 transition-all duration-200 hover:scale-110 text-sm sm:text-base">👍</button>
-                            <button className="p-1.5 sm:p-2 rounded-lg hover:bg-white/10 transition-all duration-200 hover:scale-110 text-sm sm:text-base">👎</button>
-                            <button
-                              onClick={() => navigator.clipboard.writeText(String(msg.text))}
-                              className="p-1.5 sm:p-2 rounded-lg hover:bg-white/10 transition-all duration-200 hover:scale-110"
-                            >
-                              <Copy size={16} className="sm:w-5 sm:h-5" />
-                            </button>
-                          </div>
+                          // ===== СООБЩЕНИЕ AI =====
+                          <>
+                            {isFileMessage ? (
+                              <div className="flex items-center gap-2 sm:gap-3 bg-white/5 rounded-xl p-2 sm:p-3 border border-indigo-500/30 hover:bg-white/10 transition-all duration-200">
+                                <span className="text-2xl sm:text-3xl">📄</span>
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-medium text-white text-sm sm:text-base truncate">
+                                    {msg.text.replace("📎", "").trim()}
+                                  </div>
+                                  <div className="text-xs text-slate-400">Файл</div>
+                                </div>
+                              </div>
+                            ) : (
+                              <ReactMarkdown
+                                remarkPlugins={[remarkGfm]}
+                                components={{
+                                  h1: ({ children }) => <h1 className="text-xl sm:text-2xl font-bold text-indigo-400 mt-3 sm:mt-4 mb-1 sm:mb-2">{children}</h1>,
+                                  h2: ({ children }) => <h2 className="text-lg sm:text-xl font-semibold text-purple-300 mt-2 sm:mt-3 mb-1">{children}</h2>,
+                                  h3: ({ children }) => <h3 className="text-base sm:text-lg font-medium text-pink-300 mt-2">{children}</h3>,
+                                  ul: ({ children }) => <ul className="list-disc pl-4 sm:pl-5 space-y-1 text-slate-300">{children}</ul>,
+                                  li: ({ children }) => <li className="marker:text-indigo-400 text-sm sm:text-base">{children}</li>,
+                                  p: ({ children }) => <p className="text-slate-300 my-1 sm:my-2 leading-relaxed text-sm sm:text-base">{children}</p>,
+                                  strong: ({ children }) => <strong className="text-white font-semibold">{children}</strong>,
+                                  blockquote: ({ children }) => <blockquote className="border-l-4 border-indigo-500 pl-3 sm:pl-4 italic text-slate-400 my-2 text-sm sm:text-base">{children}</blockquote>,
+                                  code: ({ children }) => <pre className="bg-black/50 rounded-xl p-3 sm:p-4 overflow-x-auto text-xs sm:text-sm text-green-300 border border-white/5"><code>{children}</code></pre>
+                                }}
+                              >
+                                {String(msg.text || "")}
+                              </ReactMarkdown>
+                            )}
+                            {msg.role === "ai" && (
+                              <div className="flex gap-2 mt-2 sm:mt-4">
+                                <button className="p-1.5 sm:p-2 rounded-lg hover:bg-white/10 transition-all duration-200 hover:scale-110 text-sm sm:text-base">👍</button>
+                                <button className="p-1.5 sm:p-2 rounded-lg hover:bg-white/10 transition-all duration-200 hover:scale-110 text-sm sm:text-base">👎</button>
+                                <button
+                                  onClick={() => navigator.clipboard.writeText(String(msg.text))}
+                                  className="p-1.5 sm:p-2 rounded-lg hover:bg-white/10 transition-all duration-200 hover:scale-110"
+                                >
+                                  <Copy size={16} className="sm:w-5 sm:h-5" />
+                                </button>
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>
