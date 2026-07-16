@@ -43,7 +43,7 @@ const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5173',
   process.env.FRONTEND_URL || 'https://nova-ai-ten-ashen.vercel.app',
-  'https://nova-ai-nov-a.vercel.app'  // 👈 твой фактический фронтенд
+  'https://nova-ai-nov-a.vercel.app'
 ].filter(Boolean);
 
 app.use(cors({
@@ -57,7 +57,7 @@ app.use(cors({
     }
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],  // 👈 добавлен PATCH
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
@@ -90,7 +90,6 @@ const chatLimiter = rateLimit({
   message: { error: "Слишком много запросов. Подождите минуту." },
   keyGenerator: (req) => {
     if (req.userId) return String(req.userId);
-    // Используем встроенный генератор для IPv6
     return rateLimit.ipKeyGenerator(req);
   },
   skip: (req) => req.method === 'OPTIONS'
@@ -348,7 +347,6 @@ app.post("/chats", (req, res) => {
 app.get("/chats", (req, res) => {
   try {
     const userId = req.userId;
-    // Возвращаем с полем pinned, сортировка по закреплению
     const chats = db.prepare(`SELECT * FROM conversations WHERE user_id = ? ORDER BY pinned DESC, id DESC`).all(userId);
     res.json(chats);
   } catch (error) {
@@ -721,6 +719,59 @@ app.post('/tts', async (req, res) => {
     clearTimeout(timeoutId);
     console.error('❌ TTS error:', error);
     res.status(500).json({ error: 'Ошибка синтеза речи' });
+  }
+});
+
+// ===== ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ =====
+app.post("/generate-image", authenticate, async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { prompt } = req.body;
+
+    if (!prompt || prompt.trim().length < 3) {
+      return res.status(400).json({ error: "Слишком короткий запрос" });
+    }
+
+    const limitCheck = checkLimit(userId);
+    if (!limitCheck.allowed) {
+      return res.status(429).json({
+        error: `❌ Дневной лимит исчерпан (${limitCheck.limit} в день)`
+      });
+    }
+
+    const response = await fetch("https://openrouter.ai/api/v1/images/generations", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.OPENROUTER_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "dall-e-3",
+        prompt: prompt,
+        n: 1,
+        size: "1024x1024"
+      })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error("OpenRouter Image error:", errorData);
+      return res.status(500).json({ error: "Ошибка генерации изображения" });
+    }
+
+    const data = await response.json();
+    const imageUrl = data.data?.[0]?.url;
+
+    if (!imageUrl) {
+      return res.status(500).json({ error: "Не удалось получить URL изображения" });
+    }
+
+    incrementUsage(userId);
+
+    res.json({ imageUrl });
+  } catch (error) {
+    console.error("Generate image error:", error);
+    res.status(500).json({ error: "Ошибка генерации" });
   }
 });
 

@@ -197,6 +197,20 @@ export async function getTTS(text) {
   return await response.arrayBuffer();
 }
 
+// ===== ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ =====
+export async function generateImage(prompt) {
+  const response = await fetch(`${API}/generate-image`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ prompt })
+  });
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Ошибка генерации изображения");
+  }
+  return await response.json();
+}
+
 // ===== ЗАГРУЗКА ФАЙЛОВ =====
 export async function uploadFile(file, question = "Опиши, что изображено на картинке.") {
   const formData = new FormData();
