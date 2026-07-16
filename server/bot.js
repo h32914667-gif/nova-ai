@@ -38,7 +38,7 @@ bot.start((ctx) => {
   });
 });
 
-// ===== Обработка предоплатного запроса =====
+// ===== Предоплата =====
 bot.on('pre_checkout_query', (ctx) => {
   ctx.answerPreCheckoutQuery(true);
 });
@@ -67,12 +67,11 @@ bot.on('successful_payment', async (ctx) => {
   }
 });
 
-// ===== Запуск бота с настройками =====
+// ===== Запуск бота (telegraf-hardened сам обрабатывает 409) =====
 bot.launch({
   polling: {
     timeout: 30,
-    limit: 100,
-    // telegraf-hardened сам будет обрабатывать 409 с экспоненциальной задержкой
+    limit: 100
   }
 });
 
