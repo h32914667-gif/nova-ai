@@ -1,5 +1,5 @@
 require("dotenv").config();
-const { Telegraf } = require('telegraf');
+const { Telegraf } = require('telegraf-hardened');
 const http = require('http');
 const db = require('./database');
 
@@ -75,7 +75,7 @@ async function startBot() {
   } catch (err) {
     if (err.response && err.response.error_code === 409) {
       console.warn('⚠️ Конфликт (409). Повторный запуск через 5 секунд...');
-      setTimeout(startBot, 5000);
+      setTimeout(startBot, 30000); // 30 секунд
     } else {
       console.error('❌ Ошибка запуска бота:', err);
       process.exit(1);
