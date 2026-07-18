@@ -11,6 +11,8 @@ function setToken(token) {
 
 function removeToken() {
   localStorage.removeItem('token');
+  localStorage.removeItem('userId');
+  localStorage.removeItem('username');
 }
 
 function getHeaders() {
@@ -24,9 +26,37 @@ function getHeaders() {
   return headers;
 }
 
+// Чтобы избежать зацикленной перезагрузки, если 401 приходит из-за
+// временного сбоя сети, а не реально протухшего токена.
+let isHandlingAuthError = false;
+
+// ===== ЦЕНТРАЛЬНАЯ ОБЁРТКА НАД fetch =====
+// Раньше при 401 (невалидный/протухший токен, например после смены
+// JWT_SECRET на сервере) приложение просто показывало "Ошибка связи с Nova"
+// и оставалось в таком состоянии навсегда, пока юзер вручную не чистил
+// localStorage. Теперь: как только сервер говорит "токен невалиден",
+// мы сами стираем токен и перезагружаем страницу — приложение заново
+// пройдёт обычный флоу входа (Telegram-логин/гостевой доступ/форма логина),
+// получит новый токен, и всё продолжит работать без ручного вмешательства.
+async function apiFetch(url, options = {}) {
+  const response = await fetch(url, options);
+
+  if (response.status === 401 && !isHandlingAuthError) {
+    isHandlingAuthError = true;
+    removeToken();
+    // Небольшая задержка, чтобы не словить гонку, если несколько
+    // запросов упали в 401 одновременно
+    setTimeout(() => {
+      window.location.reload();
+    }, 100);
+  }
+
+  return response;
+}
+
 // ===== АВТОРИЗАЦИЯ =====
 export async function register(username, password) {
-  const response = await fetch(`${API}/register`, {
+  const response = await apiFetch(`${API}/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password })
@@ -43,7 +73,7 @@ export async function register(username, password) {
 }
 
 export async function login(username, password) {
-  const response = await fetch(`${API}/login`, {
+  const response = await apiFetch(`${API}/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password })
@@ -61,14 +91,12 @@ export async function login(username, password) {
 
 export async function logout() {
   removeToken();
-  localStorage.removeItem('userId');
-  localStorage.removeItem('username');
   return { success: true };
 }
 
 // ===== ЧАТЫ =====
 export async function createChat() {
-  const response = await fetch(`${API}/chats`, {
+  const response = await apiFetch(`${API}/chats`, {
     method: "POST",
     headers: getHeaders()
   });
@@ -80,7 +108,7 @@ export async function createChat() {
 }
 
 export async function getChats() {
-  const response = await fetch(`${API}/chats`, {
+  const response = await apiFetch(`${API}/chats`, {
     headers: getHeaders()
   });
   if (!response.ok) {
@@ -90,7 +118,7 @@ export async function getChats() {
 }
 
 export async function deleteChat(chatId) {
-  const response = await fetch(`${API}/chats/${chatId}`, {
+  const response = await apiFetch(`${API}/chats/${chatId}`, {
     method: "DELETE",
     headers: getHeaders()
   });
@@ -103,7 +131,7 @@ export async function deleteChat(chatId) {
 
 // ===== ПЕРЕКЛЮЧИТЬ ЗАКРЕПЛЕНИЕ ЧАТА =====
 export async function togglePinChat(chatId) {
-  const response = await fetch(`${API}/chats/${chatId}/pin`, {
+  const response = await apiFetch(`${API}/chats/${chatId}/pin`, {
     method: "PATCH",
     headers: getHeaders()
   });
@@ -116,7 +144,7 @@ export async function togglePinChat(chatId) {
 
 // ===== СООБЩЕНИЯ =====
 export async function getMessages(chatId) {
-  const response = await fetch(`${API}/messages/${chatId}`, {
+  const response = await apiFetch(`${API}/messages/${chatId}`, {
     headers: getHeaders()
   });
   if (!response.ok) {
@@ -128,7 +156,7 @@ export async function getMessages(chatId) {
 // ===== ОСНОВНОЙ ЧАТ =====
 export async function askNova(chatId, message, onChunk) {
   try {
-    const response = await fetch(`${API}/chat`, {
+    const response = await apiFetch(`${API}/chat`, {
       method: "POST",
       headers: getHeaders(),
       body: JSON.stringify({ chatId, message })
@@ -174,7 +202,7 @@ export async function askNova(chatId, message, onChunk) {
 
 // ===== ПАМЯТЬ =====
 export async function getMemory() {
-  const response = await fetch(`${API}/memory`, {
+  const response = await apiFetch(`${API}/memory`, {
     headers: getHeaders()
   });
   if (!response.ok) {
@@ -185,7 +213,7 @@ export async function getMemory() {
 
 // ===== TTS =====
 export async function getTTS(text) {
-  const response = await fetch(`${API}/tts`, {
+  const response = await apiFetch(`${API}/tts`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify({ text })
@@ -199,7 +227,7 @@ export async function getTTS(text) {
 
 // ===== ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ =====
 export async function generateImage(prompt) {
-  const response = await fetch(`${API}/generate-image`, {
+  const response = await apiFetch(`${API}/generate-image`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify({ prompt })
@@ -213,7 +241,7 @@ export async function generateImage(prompt) {
 
 // ===== СОЗДАНИЕ ИНВОЙСА ДЛЯ ОПЛАТЫ ПОДПИСКИ =====
 export async function createInvoice(plan) {
-  const response = await fetch(`${API}/create-invoice`, {
+  const response = await apiFetch(`${API}/create-invoice`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify({ plan })
@@ -230,7 +258,7 @@ export async function uploadFile(file, question = "Опиши, что изобр
   const formData = new FormData();
   formData.append("file", file);
   formData.append("question", question);
-  const response = await fetch(`${API}/upload`, {
+  const response = await apiFetch(`${API}/upload`, {
     method: "POST",
     headers: {
       'Authorization': getHeaders()['Authorization'] || ''
@@ -244,10 +272,42 @@ export async function uploadFile(file, question = "Опиши, что изобр
   return await response.json();
 }
 
+// ===== АВТОРИЗАЦИЯ ЧЕРЕЗ TELEGRAM =====
+export async function telegramLogin(initData, user) {
+  const response = await apiFetch(`${API}/telegram-login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ initData, user })
+  });
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.error || "Ошибка авторизации через Telegram");
+  }
+  const data = await response.json();
+  if (data.token) {
+    setToken(data.token);
+  }
+  return data;
+}
+
+// ===== ГОСТЕВОЙ ДОСТУП =====
+export async function loginAsGuest() {
+  const response = await apiFetch(`${API}/guest`);
+  if (!response.ok) {
+    const errorData = await response.json();
+    throw new Error(errorData.error || "Ошибка гостевого входа");
+  }
+  const data = await response.json();
+  if (data.token) {
+    setToken(data.token);
+  }
+  return data;
+}
+
 // ===== АДМИН-ПАНЕЛЬ =====
 export async function checkAdmin() {
   try {
-    const response = await fetch(`${API}/admin/stats`, {
+    const response = await apiFetch(`${API}/admin/stats`, {
       headers: getHeaders()
     });
     return response.ok;
@@ -257,7 +317,7 @@ export async function checkAdmin() {
 }
 
 export async function getStats() {
-  const response = await fetch(`${API}/admin/stats`, {
+  const response = await apiFetch(`${API}/admin/stats`, {
     headers: getHeaders()
   });
   if (!response.ok) {
@@ -268,7 +328,7 @@ export async function getStats() {
 }
 
 export async function getUsers() {
-  const response = await fetch(`${API}/admin/users`, {
+  const response = await apiFetch(`${API}/admin/users`, {
     headers: getHeaders()
   });
   if (!response.ok) {
@@ -279,7 +339,7 @@ export async function getUsers() {
 }
 
 export async function deleteUser(id) {
-  const response = await fetch(`${API}/admin/users/${id}`, {
+  const response = await apiFetch(`${API}/admin/users/${id}`, {
     method: "DELETE",
     headers: getHeaders()
   });
@@ -292,7 +352,7 @@ export async function deleteUser(id) {
 
 // ===== ПОДПИСКИ =====
 export async function getSubscription() {
-  const response = await fetch(`${API}/subscription`, {
+  const response = await apiFetch(`${API}/subscription`, {
     headers: getHeaders()
   });
   if (!response.ok) {
@@ -303,7 +363,7 @@ export async function getSubscription() {
 }
 
 export async function upgradePlan(plan) {
-  const response = await fetch(`${API}/subscription/upgrade`, {
+  const response = await apiFetch(`${API}/subscription/upgrade`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify({ plan })
@@ -316,7 +376,7 @@ export async function upgradePlan(plan) {
 }
 
 export async function getPlans() {
-  const response = await fetch(`${API}/plans`, {
+  const response = await apiFetch(`${API}/plans`, {
     headers: getHeaders()
   });
   if (!response.ok) {
